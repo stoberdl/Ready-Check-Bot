@@ -1,0 +1,21 @@
+app = "ready-check-bot-stober"
+primary_region = "ord"
+
+[build]
+
+[env]
+# Add any non-secret environment variables here
+
+# Discord bots don't need HTTP services
+# Remove [[services]] section
+
+[vm]
+memory = "512mb"
+cpu_kind = "shared"
+cpus = 1
+
+# Mount for persistent storage
+[[mounts]]
+source = "data"
+destination = "/app/data"
+initial_size = "1gb"
