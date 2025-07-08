@@ -3,9 +3,9 @@ package com.projects.commands;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 
 public interface Command {
-    String getName();
+  String getName();
 
-    String getDescription();
+  String getDescription();
 
-    void executeSlash(SlashCommandInteractionEvent event);
+  void executeSlash(SlashCommandInteractionEvent event);
 }
