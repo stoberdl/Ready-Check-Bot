@@ -58,75 +58,20 @@ public class ReadyCheckManager {
     if (globalJDA == null) return;
 
     for (ReadyCheck readyCheck : activeReadyChecks.values()) {
-      // Only process active ready checks
       if (readyCheck.getStatus() != ReadyCheckStatus.ACTIVE) continue;
 
       boolean embedNeedsUpdate;
 
-      // Check for users in voice channels and auto-ready them if applicable
       embedNeedsUpdate = checkAndReadyUsersInVoice(readyCheck);
 
-      // Update embed if there are scheduled users (for countdowns) or if voice check made changes
       if (!readyCheck.getScheduledUsers().isEmpty() || embedNeedsUpdate) {
         updateReadyCheckEmbed(readyCheck.getId(), globalJDA);
       }
 
-      // Check if all ready and notify if so (after potential voice-based ready changes)
       if (embedNeedsUpdate && checkIfAllReady(readyCheck.getId())) {
         notifyAllReady(readyCheck.getId(), globalJDA);
       }
     }
-  }
-
-  /**
-   * Checks if any unready users are in voice channels and auto-readies them if they're not
-   * deafened. Also cancels any scheduled reminders for users who are auto-readied.
-   *
-   * @param readyCheck The ready check to process
-   * @return true if any users were auto-readied (embed needs update), false otherwise
-   */
-  private static boolean checkAndReadyUsersInVoice(ReadyCheck readyCheck) {
-    Guild guild = globalJDA.getGuildById(readyCheck.getGuildId());
-    if (guild == null) return false;
-
-    boolean anyChanges = false;
-    Set<String> allUsers = new HashSet<>(readyCheck.getTargetUsers());
-    allUsers.add(readyCheck.getInitiatorId());
-
-    for (String userId : allUsers) {
-      if (readyCheck.getReadyUsers().contains(userId)
-          || readyCheck.getPassedUsers().contains(userId)) {
-        continue;
-      }
-
-      Member member = guild.getMemberById(userId);
-      if (member == null) continue;
-
-      if (member.getVoiceState() != null && member.getVoiceState().inAudioChannel()) {
-        if (member.getVoiceState().isDeafened()) {
-          continue; // Skip this user - they're deafened so don't auto-ready
-        }
-
-        readyCheck.getReadyUsers().add(userId);
-
-        ScheduledUser scheduledUser = readyCheck.getScheduledUsers().remove(userId);
-        if (scheduledUser != null) {
-          scheduledUser.cancel();
-        }
-
-        ScheduledFuture<?> existingUntil = readyCheck.getScheduledUntilFutures().remove(userId);
-        if (existingUntil != null && !existingUntil.isDone()) {
-          existingUntil.cancel(false);
-        }
-
-        readyCheck.getUserTimers().remove(userId);
-        readyCheck.getUserUntilTimes().remove(userId);
-
-        anyChanges = true;
-      }
-    }
-
-    return anyChanges;
   }
 
   public static void setJDA(JDA jda) {
@@ -268,7 +213,7 @@ public class ReadyCheckManager {
 
     if (input.matches("\\d+")) {
       long minutes = Long.parseLong(input);
-      if (minutes >= 1 && minutes <= 1440) { // 1 minute to 24 hours
+      if (minutes >= 1 && minutes <= 1440) {
         return minutes;
       } else {
         throw new IllegalArgumentException("Minutes must be between 1 and 1440");
@@ -287,7 +232,6 @@ public class ReadyCheckManager {
     return parseAsTime(timeInput.trim().toLowerCase());
   }
 
-  /** Parse input as time with smart AM/PM detection */
   private static long parseAsTime(String input) {
     LocalTime now = LocalTime.now();
     LocalTime targetTime;
@@ -300,9 +244,7 @@ public class ReadyCheckManager {
       // Handle 24-hour format
       else if (input.contains(":") && is24HourFormat(input)) {
         targetTime = parse24HourFormat(input);
-      }
-      // Handle ambiguous formats with smart detection
-      else {
+      } else {
         targetTime = parseWithSmartDetection(input, now);
       }
 
@@ -391,34 +333,33 @@ public class ReadyCheckManager {
 
     int currentHour = now.getHour();
 
-    // Special logic based on current time ranges
     if (currentHour >= 22 || currentHour <= 5) {
-      // Late night (10pm-5am): default to next reasonable time
-      // If they say "7" at 11pm, they probably mean 7am tomorrow
       return amTime.isAfter(now) ? amTime : pmTime;
-    } else if (currentHour <= 11) {
-      // Morning (6am-11am): prefer AM unless it's in the past
-      return amTime.isAfter(now) ? amTime : pmTime;
-    } else {
-      // Afternoon/Evening (12pm-9pm): prefer PM unless it's in the past
-      return pmTime.isAfter(now) ? pmTime : amTime.plusHours(24);
     }
+
+    if (currentHour <= 11) {
+      return amTime.isAfter(now) ? amTime : pmTime;
+    }
+
+    if (pmTime.isAfter(now)) {
+      return pmTime;
+    }
+
+    return amTime.plusHours(24);
   }
 
   private static long calculateMinutesUntil(LocalTime now, LocalTime targetTime) {
-    Duration duration = Duration.between(now, targetTime);
+    LocalDateTime nowDateTime = LocalDateTime.of(LocalDate.now(), now);
+    LocalDateTime targetDateTime;
 
-    long totalSeconds = duration.getSeconds();
-    long minutesUntil = (totalSeconds + 59) / 60;
-
-    // If time is in the past or now, assume they mean tomorrow
-    if (minutesUntil <= 0) {
-      duration = Duration.between(now, targetTime.plusHours(24));
-      totalSeconds = duration.getSeconds();
-      minutesUntil = (totalSeconds + 59) / 60;
+    if (targetTime.isAfter(now)) {
+      targetDateTime = LocalDateTime.of(LocalDate.now(), targetTime);
+    } else {
+      targetDateTime = LocalDateTime.of(LocalDate.now().plusDays(1), targetTime);
     }
 
-    return minutesUntil;
+    Duration duration = Duration.between(nowDateTime, targetDateTime);
+    return Math.max(1, duration.toMinutes());
   }
 
   private static void cancelExistingScheduledUser(ReadyCheck readyCheck, String userId) {
@@ -473,7 +414,7 @@ public class ReadyCheckManager {
       throw new IllegalArgumentException("Ready check not found");
     }
 
-    long minutesUntilReady = parseTimeInputAsTime(timeInput); // For "r at X" - smart time parsing
+    long minutesUntilReady = parseTimeInputAsTime(timeInput);
 
     if (minutesUntilReady <= 0) {
       throw new IllegalArgumentException("Time must be in the future");
@@ -484,10 +425,9 @@ public class ReadyCheckManager {
     readyCheck.getReadyUsers().remove(userId);
     readyCheck.getUserTimers().remove(userId);
 
-    // Calculate exact target timestamp and round to minute boundary
     long currentTimeMs = System.currentTimeMillis();
     long targetTimeMs = currentTimeMs + (minutesUntilReady * 60 * 1000);
-    targetTimeMs = (targetTimeMs / 60000) * 60000; // Round to exact minute
+    targetTimeMs = (targetTimeMs / 60000) * 60000;
 
     ScheduledFuture<?> reminderFuture =
         scheduler.schedule(
@@ -534,11 +474,9 @@ public class ReadyCheckManager {
   /** Helper method to format timestamps for display consistency */
   private static String formatScheduledTime(long timestampMs, long minutesLeft) {
     if (minutesLeft >= 60) {
-      // More than 1 hour: use Discord timestamp (timezone-aware)
       long discordTimestamp = timestampMs / 1000;
       return "<t:" + discordTimestamp + ":t>";
     } else {
-      // Less than 1 hour: show minutes (no timezone issues)
       return minutesLeft + "min";
     }
   }
@@ -603,24 +541,20 @@ public class ReadyCheckManager {
   public static boolean markUserReady(String readyCheckId, String userId) {
     ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
     if (readyCheck == null) {
-      //      logger.warn("Attempted to mark user ready for non-existent ready check: {}",
-      // readyCheckId);
       return false;
     }
 
-    readyCheck.getUserTimers().remove(userId);
-    readyCheck.getScheduledUsers().remove(userId);
+    cancelExistingScheduledUser(readyCheck, userId);
 
+    readyCheck.getUserTimers().remove(userId);
     readyCheck.getReadyUsers().add(userId);
 
     boolean allReady = readyCheck.getReadyUsers().containsAll(readyCheck.getTargetUsers());
 
     if (allReady && readyCheck.getStatus() == ReadyCheckStatus.ACTIVE) {
       readyCheck.setStatus(ReadyCheckStatus.COMPLETED);
-      // logger.info("Ready check completed: {}", readyCheckId);
     }
 
-    //   logger.info("User {} marked as ready for ready check: {}", userId, readyCheckId);
     return allReady;
   }
 
@@ -728,9 +662,10 @@ public class ReadyCheckManager {
       readyCheck.getReadyUsers().remove(userId);
       return false;
     } else {
+      cancelExistingScheduledUser(readyCheck, userId);
+
       readyCheck.getReadyUsers().add(userId);
       readyCheck.getPassedUsers().remove(userId);
-      readyCheck.getScheduledUsers().remove(userId);
       readyCheck.getUserUntilTimes().remove(userId);
       return true;
     }
@@ -960,36 +895,131 @@ public class ReadyCheckManager {
     Member member = guild.getMemberById(userId);
     if (member == null) return;
 
-    // todo:look at this
-    if (member.getVoiceState() != null && member.getVoiceState().inAudioChannel()) {
-      // If user is deafened, send reminder as usual
-      if (member.getVoiceState().isDeafened()) {
-        // User is deafened, send reminder normally
-      } else {
-        // User is in voice and not deafened - auto-ready them instead of sending reminder
-        readyCheck.getScheduledUsers().remove(userId);
-        readyCheck.getReadyUsers().add(userId);
-        readyCheck.getPassedUsers().remove(userId); // Remove from passed if they were passed
-
-        updateReadyCheckEmbed(readyCheckId, jda);
-
-        if (checkIfAllReady(readyCheckId)) {
-          notifyAllReady(readyCheckId, jda);
-        }
-
-        return;
-      }
+    // Check if user should be auto-readied instead of reminded
+    if (shouldAutoReadyUser(member)) {
+      autoReadyUserFromReminder(readyCheck, userId, readyCheckId, jda);
+      return;
     }
-    // User is not in voice channel OR is deafened - send reminder as usual
+
+    // User needs a reminder - remove from scheduled and update the embed with reminder
+    readyCheck.getScheduledUsers().remove(userId);
+
     TextChannel channel = guild.getTextChannelById(readyCheck.getChannelId());
     if (channel == null) return;
 
+    deleteOldMessageAndSendReminder(readyCheck, readyCheckId, userId, member, channel, jda);
+  }
+
+  private static boolean shouldAutoReadyUser(Member member) {
+    return member.getVoiceState() != null
+        && member.getVoiceState().inAudioChannel()
+        && !member.getVoiceState().isDeafened();
+  }
+
+  private static void autoReadyUserFromReminder(
+      ReadyCheck readyCheck, String userId, String readyCheckId, JDA jda) {
     readyCheck.getScheduledUsers().remove(userId);
+    readyCheck.getReadyUsers().add(userId);
+    readyCheck.getPassedUsers().remove(userId);
 
-    String messageLink = buildMessageLink(readyCheck);
-    String messageText = "⏰ " + member.getAsMention() + " it's time to be ready! " + messageLink;
+    updateReadyCheckEmbed(readyCheckId, jda);
 
-    channel.sendMessage(messageText).queue(message -> scheduleMessageDeletion(message, 3));
+    if (checkIfAllReady(readyCheckId)) {
+      notifyAllReady(readyCheckId, jda);
+    }
+  }
+
+  private static void deleteOldMessageAndSendReminder(
+      ReadyCheck readyCheck,
+      String readyCheckId,
+      String userId,
+      Member member,
+      TextChannel channel,
+      JDA jda) {
+    if (readyCheck.getMessageId() != null) {
+      channel
+          .retrieveMessageById(readyCheck.getMessageId())
+          .queue(
+              oldMessage -> {
+                oldMessage.delete().queue(null, error -> {});
+                sendUpdatedReadyCheckWithReminder(readyCheckId, userId, member, jda);
+              },
+              error -> sendUpdatedReadyCheckWithReminder(readyCheckId, userId, member, jda));
+    } else {
+      sendUpdatedReadyCheckWithReminder(readyCheckId, userId, member, jda);
+    }
+  }
+
+  private static void sendUpdatedReadyCheckWithReminder(
+      String readyCheckId, String userId, Member member, JDA jda) {
+    ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
+    if (readyCheck == null) return;
+
+    Guild guild = jda.getGuildById(readyCheck.getGuildId());
+    if (guild == null) return;
+
+    TextChannel channel = guild.getTextChannelById(readyCheck.getChannelId());
+    if (channel == null) return;
+
+    EmbedBuilder embed = buildReadyCheckEmbed(readyCheck, jda, readyCheck.getDescription());
+    List<Button> mainButtons = createMainButtons(readyCheckId);
+    List<Button> saveButton = createSaveButton(readyCheckId);
+
+    String reminderText = "⏰ " + member.getAsMention() + " it's time to be ready!";
+
+    channel
+        .sendMessage(reminderText)
+        .setEmbeds(embed.build())
+        .setComponents(ActionRow.of(mainButtons), ActionRow.of(saveButton))
+        .queue(
+            newMessage -> {
+              readyCheck.setMessageId(newMessage.getId());
+            });
+  }
+
+  private static boolean checkAndReadyUsersInVoice(ReadyCheck readyCheck) {
+    Guild guild = globalJDA.getGuildById(readyCheck.getGuildId());
+    if (guild == null) return false;
+
+    boolean anyChanges = false;
+    Set<String> allUsers = new HashSet<>(readyCheck.getTargetUsers());
+    allUsers.add(readyCheck.getInitiatorId());
+
+    for (String userId : allUsers) {
+      if (isUserAlreadyProcessed(readyCheck, userId)) {
+        continue;
+      }
+
+      Member member = guild.getMemberById(userId);
+      if (member == null) continue;
+
+      if (shouldAutoReadyUserInVoice(member)) {
+        autoReadyUserInVoice(readyCheck, userId);
+        anyChanges = true;
+      }
+    }
+
+    return anyChanges;
+  }
+
+  private static boolean isUserAlreadyProcessed(ReadyCheck readyCheck, String userId) {
+    return readyCheck.getReadyUsers().contains(userId)
+        || readyCheck.getPassedUsers().contains(userId);
+  }
+
+  private static boolean shouldAutoReadyUserInVoice(Member member) {
+    return member.getVoiceState() != null
+        && member.getVoiceState().inAudioChannel()
+        && !member.getVoiceState().isDeafened();
+  }
+
+  private static void autoReadyUserInVoice(ReadyCheck readyCheck, String userId) {
+    readyCheck.getReadyUsers().add(userId);
+
+    cancelExistingScheduledUser(readyCheck, userId);
+
+    readyCheck.getUserTimers().remove(userId);
+    readyCheck.getUserUntilTimes().remove(userId);
   }
 
   private static String buildMessageLink(ReadyCheck readyCheck) {
