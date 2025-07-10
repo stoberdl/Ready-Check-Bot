@@ -25,7 +25,7 @@ public class InfoCommand implements Command {
     embedBuilder.setColor(new Color(148, 0, 211));
     embedBuilder.addField("Language", "Java 21", true);
     embedBuilder.addField("Library", "JDA (Java Discord API)", true);
-    embedBuilder.setFooter("Version 1.0");
+    embedBuilder.setFooter("Version 1.2");
 
     MessageEmbed embed = embedBuilder.build();
     event.replyEmbeds(embed).queue();

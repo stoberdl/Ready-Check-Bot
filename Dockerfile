@@ -1,24 +1,22 @@
-# Use official OpenJDK 21 image
 FROM openjdk:21-jdk-slim
 
-# Set working directory
 WORKDIR /app
 
-# Copy Maven wrapper and pom.xml
-COPY mvnw pom.xml ./
-COPY .mvn .mvn
+# Install Maven
+RUN apt-get update && apt-get install -y maven
 
-# Make mvnw executable
-RUN chmod +x ./mvnw
-
-# Download dependencies (cached layer)
-RUN ./mvnw dependency:go-offline -B
-
-# Copy source code
+# Copy project files
+COPY pom.xml .
 COPY src ./src
 
 # Build the application
-RUN ./mvnw clean package -DskipTests
+RUN mvn clean package -DskipTests
+
+# Create data directory for JSON persistence
+RUN mkdir -p /app/data
+
+# Copy the built JAR to a standard location
+RUN cp target/ready-check-bot-1.0-SNAPSHOT-jar-with-dependencies.jar app.jar
 
 # Run the bot
-CMD ["java", "-jar", "target/ready-check-bot-1.0-SNAPSHOT-jar-with-dependencies.jar"]
+CMD ["java", "-jar", "app.jar"]
