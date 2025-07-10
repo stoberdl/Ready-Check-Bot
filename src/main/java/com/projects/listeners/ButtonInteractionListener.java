@@ -37,11 +37,7 @@ public class ButtonInteractionListener extends ListenerAdapter {
 
   private void scheduleEphemeralDeletion(InteractionHook hook, int seconds) {
     scheduler.schedule(
-        () -> {
-          hook.deleteOriginal().queue(null, error -> {});
-        },
-        seconds,
-        TimeUnit.SECONDS);
+        () -> hook.deleteOriginal().queue(null, error -> {}), seconds, TimeUnit.SECONDS);
   }
 
   private void handleToggleReadyButton(ButtonInteractionEvent event, String readyCheckId) {
@@ -68,10 +64,7 @@ public class ButtonInteractionListener extends ListenerAdapter {
     event
         .reply("🚫 You've been marked as passed and won't be included in the ready count.")
         .setEphemeral(true)
-        .queue(
-            hook -> {
-              scheduleEphemeralDeletion(hook, 15);
-            });
+        .queue(hook -> scheduleEphemeralDeletion(hook, 15));
   }
 
   private void handleReadyAtButton(ButtonInteractionEvent event, String readyCheckId) {
@@ -101,10 +94,7 @@ public class ButtonInteractionListener extends ListenerAdapter {
             "💾 Ready check configuration saved! Use `/r` to quickly start this type of ready check"
                 + " again.(or type 'r' in chat for most recent)")
         .setEphemeral(true)
-        .queue(
-            hook -> {
-              scheduleEphemeralDeletion(hook, 20);
-            });
+        .queue(hook -> scheduleEphemeralDeletion(hook, 20));
   }
 
   private TextInput createTimeInput(String label) {

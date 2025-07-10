@@ -21,7 +21,7 @@ public class ReadyCheckBot {
   public static void main(String[] args) {
     String botToken = BotConfig.getBotToken();
 
-    if (botToken == null || botToken.isEmpty()) {
+    if (botToken.isEmpty()) {
       logger.error("Bot token not found in config.properties. Please provide a valid token.");
       return;
     }

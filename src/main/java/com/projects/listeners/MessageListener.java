@@ -10,11 +10,8 @@ import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class MessageListener extends ListenerAdapter {
-  private static final Logger logger = LoggerFactory.getLogger(MessageListener.class);
 
   // Pattern to match "r", "R", "r in X", "R in X", "r at X", "R at X"
   private static final Pattern R_PATTERN = Pattern.compile("^[rR](?:\\s+(in|at)\\s+(.+))?$");

@@ -25,7 +25,7 @@ public class ReadyCheckManager {
   private static final Map<String, SavedReadyCheck> savedReadyChecks = new ConcurrentHashMap<>();
   private static final Map<String, Boolean> mentionPreferences = new ConcurrentHashMap<>();
   private static final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(4);
-  private static final String SAVE_FILE = "saved_ready_checks.json";
+  private static final String SAVE_FILE = getConfigFilePath();
   private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
   private static final long TWO_HOURS_MS = 2 * 60 * 60 * 1000;
   private static JDA globalJDA;
@@ -61,10 +61,10 @@ public class ReadyCheckManager {
       // Only process active ready checks
       if (readyCheck.getStatus() != ReadyCheckStatus.ACTIVE) continue;
 
-      boolean embedNeedsUpdate = false;
+      boolean embedNeedsUpdate;
 
       // Check for users in voice channels and auto-ready them if applicable
-      embedNeedsUpdate |= checkAndReadyUsersInVoice(readyCheck);
+      embedNeedsUpdate = checkAndReadyUsersInVoice(readyCheck);
 
       // Update embed if there are scheduled users (for countdowns) or if voice check made changes
       if (!readyCheck.getScheduledUsers().isEmpty() || embedNeedsUpdate) {
@@ -94,7 +94,6 @@ public class ReadyCheckManager {
     allUsers.add(readyCheck.getInitiatorId());
 
     for (String userId : allUsers) {
-      // Skip if user is already ready or passed
       if (readyCheck.getReadyUsers().contains(userId)
           || readyCheck.getPassedUsers().contains(userId)) {
         continue;
@@ -264,7 +263,7 @@ public class ReadyCheckManager {
    * Parse time input for "r in X" context - always treats numbers as minutes Examples: "5", "30",
    * "120"
    */
-  private static long parseTimeInputAsMinutes(String timeInput) throws Exception {
+  private static long parseTimeInputAsMinutes(String timeInput) {
     String input = timeInput.trim();
 
     if (input.matches("\\d+")) {
@@ -284,12 +283,12 @@ public class ReadyCheckManager {
    * Parse time input for "r at X" context - treats as time with smart AM/PM Examples: "5", "7:30",
    * "7pm", "19:30"
    */
-  private static long parseTimeInputAsTime(String timeInput) throws Exception {
+  private static long parseTimeInputAsTime(String timeInput) {
     return parseAsTime(timeInput.trim().toLowerCase());
   }
 
   /** Parse input as time with smart AM/PM detection */
-  private static long parseAsTime(String input) throws Exception {
+  private static long parseAsTime(String input) {
     LocalTime now = LocalTime.now();
     LocalTime targetTime;
 
@@ -315,7 +314,7 @@ public class ReadyCheckManager {
   }
 
   /** Parse explicit AM/PM formats like "7pm", "7:30am" */
-  private static LocalTime parseExplicitAmPm(String input) throws Exception {
+  private static LocalTime parseExplicitAmPm(String input) {
     String normalizedInput = input.toUpperCase().replaceAll("\\s+", "");
 
     if (normalizedInput.matches("\\d+(PM|AM)")) {
@@ -351,7 +350,7 @@ public class ReadyCheckManager {
     return false;
   }
 
-  private static LocalTime parse24HourFormat(String input) throws Exception {
+  private static LocalTime parse24HourFormat(String input) {
     String[] parts = input.split(":");
     if (parts.length == 2) {
       int hour = Integer.parseInt(parts[0]);
@@ -364,7 +363,7 @@ public class ReadyCheckManager {
     throw new IllegalArgumentException("Invalid 24-hour format");
   }
 
-  private static LocalTime parseWithSmartDetection(String input, LocalTime now) throws Exception {
+  private static LocalTime parseWithSmartDetection(String input, LocalTime now) {
     int hour, minute = 0;
 
     if (input.contains(":")) {
@@ -397,7 +396,7 @@ public class ReadyCheckManager {
       // Late night (10pm-5am): default to next reasonable time
       // If they say "7" at 11pm, they probably mean 7am tomorrow
       return amTime.isAfter(now) ? amTime : pmTime;
-    } else if (currentHour >= 6 && currentHour <= 11) {
+    } else if (currentHour <= 11) {
       // Morning (6am-11am): prefer AM unless it's in the past
       return amTime.isAfter(now) ? amTime : pmTime;
     } else {
@@ -435,7 +434,7 @@ public class ReadyCheckManager {
     }
   }
 
-  public static String scheduleReadyAt(
+  public static void scheduleReadyAt(
       String readyCheckId, String timeInput, String userId, JDA jda) {
     try {
       long delayMinutes = parseTimeInputAsMinutes(timeInput);
@@ -463,14 +462,14 @@ public class ReadyCheckManager {
       readyCheck.getScheduledUsers().put(userId, scheduledUser);
 
       LocalTime readyTime = LocalTime.now().plusMinutes(delayMinutes);
-      return formatTimeForDisplay(timeInput, delayMinutes, readyTime);
+      formatTimeForDisplay(timeInput, readyTime);
     } catch (Exception e) {
       throw new IllegalArgumentException("Invalid time format: " + timeInput);
     }
   }
 
   public static String scheduleReadyAtSmart(
-      String readyCheckId, String timeInput, String userId, JDA jda) throws Exception {
+      String readyCheckId, String timeInput, String userId, JDA jda) {
     ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
     if (readyCheck == null) {
       throw new IllegalArgumentException("Ready check not found");
@@ -593,7 +592,7 @@ public class ReadyCheckManager {
     Set<String> expiredUsers = new HashSet<>();
 
     for (Map.Entry<String, ScheduledUser> entry : readyCheck.getScheduledUsers().entrySet()) {
-      if (entry.getValue().getReadyTimestamp() <= currentTime) {
+      if (entry.getValue().readyTimestamp() <= currentTime) {
         expiredUsers.add(entry.getKey());
       }
     }
@@ -616,9 +615,7 @@ public class ReadyCheckManager {
 
     readyCheck.getReadyUsers().add(userId);
 
-    boolean allReady =
-        readyCheck.getTargetUsers().stream()
-            .allMatch(targetUserId -> readyCheck.getReadyUsers().contains(targetUserId));
+    boolean allReady = readyCheck.getReadyUsers().containsAll(readyCheck.getTargetUsers());
 
     if (allReady && readyCheck.getStatus() == ReadyCheckStatus.ACTIVE) {
       readyCheck.setStatus(ReadyCheckStatus.COMPLETED);
@@ -694,7 +691,7 @@ public class ReadyCheckManager {
     EmbedBuilder summaryEmbed =
         new EmbedBuilder()
             .setTitle("✅ Ready Check Complete")
-            .setDescription(readyCheck.getDescription() + "\n\n" + memberList.toString())
+            .setDescription(readyCheck.getDescription() + "\n\n" + memberList)
             .setColor(Color.GREEN)
             .setTimestamp(Instant.now());
 
@@ -707,20 +704,13 @@ public class ReadyCheckManager {
               channel
                   .sendMessage(mentions)
                   .setEmbeds(summaryEmbed.build())
-                  .queue(
-                      newMessage -> {
-                        readyCheck.setMessageId(newMessage.getId());
-                      });
+                  .queue(newMessage -> readyCheck.setMessageId(newMessage.getId()));
             },
-            error -> {
-              channel
-                  .sendMessage(mentions)
-                  .setEmbeds(summaryEmbed.build())
-                  .queue(
-                      newMessage -> {
-                        readyCheck.setMessageId(newMessage.getId());
-                      });
-            });
+            error ->
+                channel
+                    .sendMessage(mentions)
+                    .setEmbeds(summaryEmbed.build())
+                    .queue(newMessage -> readyCheck.setMessageId(newMessage.getId())));
   }
 
   public static void ensureUserInReadyCheck(String readyCheckId, String userId) {
@@ -738,14 +728,12 @@ public class ReadyCheckManager {
 
     if (readyCheck.getReadyUsers().contains(userId)) {
       readyCheck.getReadyUsers().remove(userId);
-      readyCheck.setLastInteractionTime(System.currentTimeMillis());
       return false;
     } else {
       readyCheck.getReadyUsers().add(userId);
       readyCheck.getPassedUsers().remove(userId);
       readyCheck.getScheduledUsers().remove(userId);
       readyCheck.getUserUntilTimes().remove(userId);
-      readyCheck.setLastInteractionTime(System.currentTimeMillis());
       return true;
     }
   }
@@ -759,7 +747,6 @@ public class ReadyCheckManager {
     readyCheck.getReadyUsers().remove(userId);
     readyCheck.getScheduledUsers().remove(userId);
     readyCheck.getUserUntilTimes().remove(userId);
-    readyCheck.setLastInteractionTime(System.currentTimeMillis());
   }
 
   public static boolean checkIfAllReady(String readyCheckId) {
@@ -772,7 +759,6 @@ public class ReadyCheckManager {
     if (readyCheck == null) return;
 
     readyCheck.getPassedUsers().remove(userId);
-    readyCheck.setLastInteractionTime(System.currentTimeMillis());
   }
 
   /**
@@ -788,7 +774,7 @@ public class ReadyCheckManager {
         .filter(readyCheck -> readyCheck.getStatus() == ReadyCheckStatus.ACTIVE)
         .filter(
             readyCheck -> {
-              // Include user if they're in target users OR if they're passed (they can re-engage)
+              // Include user if they're in target users, OR if they're passed (they can re-engage)
               return readyCheck.getTargetUsers().contains(userId)
                   || readyCheck.getPassedUsers().contains(userId)
                   || readyCheck.getInitiatorId().equals(userId);
@@ -881,10 +867,7 @@ public class ReadyCheckManager {
         .sendMessage(mentions)
         .setEmbeds(embed.build())
         .setComponents(ActionRow.of(mainButtons), ActionRow.of(saveButton))
-        .queue(
-            message -> {
-              readyCheck.setMessageId(message.getId());
-            });
+        .queue(message -> readyCheck.setMessageId(message.getId()));
   }
 
   public static List<SavedReadyCheck> getSavedReadyChecks(String guildId) {
@@ -919,10 +902,7 @@ public class ReadyCheckManager {
         .sendMessage(mentions)
         .setEmbeds(embed.build())
         .setComponents(ActionRow.of(mainButtons), ActionRow.of(saveButton))
-        .queue(
-            message -> {
-              readyCheck.setMessageId(message.getId());
-            });
+        .queue(message -> readyCheck.setMessageId(message.getId()));
   }
 
   public static void setReadyCheckMessageId(String readyCheckId, String messageId) {
@@ -961,45 +941,6 @@ public class ReadyCheckManager {
     readyCheck.getTargetUsers().add(userId);
   }
 
-  private static void scheduleAutoUnready(
-      String readyCheckId, String userId, int minutes, JDA jda) {
-    ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
-    if (readyCheck != null) {
-      readyCheck.getUserTimers().put(userId, minutes);
-    }
-
-    scheduler.schedule(() -> autoUnreadyUser(readyCheckId, userId, jda), minutes, TimeUnit.MINUTES);
-  }
-
-  private static void autoUnreadyUser(String readyCheckId, String userId, JDA jda) {
-    ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
-    if (readyCheck == null) return;
-
-    readyCheck.getReadyUsers().remove(userId);
-    readyCheck.getUserTimers().remove(userId);
-    readyCheck.getUserUntilTimes().remove(userId);
-
-    updateReadyCheckEmbed(readyCheckId, jda);
-
-    Guild guild = jda.getGuildById(readyCheck.getGuildId());
-    if (guild == null) return;
-
-    TextChannel channel = guild.getTextChannelById(readyCheck.getChannelId());
-    if (channel == null) return;
-
-    Member member = guild.getMemberById(userId);
-    if (member == null) return;
-
-    String messageLink = buildMessageLink(readyCheck);
-    String messageText =
-        getMentionPreference(readyCheckId)
-            ? "⏰ " + member.getAsMention() + " your ready time has expired! " + messageLink
-            : "⏰ **" + member.getEffectiveName() + "** your ready time has expired! " + messageLink;
-
-    channel.sendMessage(messageText).queue(message -> scheduleMessageDeletion(message, 5));
-  }
-
-  // Auto pass user when "ready until" time expires - NO PUBLIC MESSAGE
   private static void autoPassUser(String readyCheckId, String userId, JDA jda) {
     ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
     if (readyCheck == null) return;
@@ -1009,7 +950,6 @@ public class ReadyCheckManager {
     readyCheck.getUserUntilTimes().remove(userId);
 
     updateReadyCheckEmbed(readyCheckId, jda);
-    // No public message - user is silently marked as passed
   }
 
   private static void sendReadyReminder(String readyCheckId, String userId, JDA jda) {
@@ -1062,12 +1002,7 @@ public class ReadyCheckManager {
   }
 
   private static void scheduleMessageDeletion(Message message, int minutes) {
-    scheduler.schedule(
-        () -> {
-          message.delete().queue(null, error -> {});
-        },
-        minutes,
-        TimeUnit.MINUTES);
+    scheduler.schedule(() -> message.delete().queue(null, error -> {}), minutes, TimeUnit.MINUTES);
   }
 
   private static Set<String> createUserSet(List<String> targetUserIds, String initiatorId) {
@@ -1149,7 +1084,7 @@ public class ReadyCheckManager {
       }
     } else if (readyCheck.getScheduledUsers().containsKey(userId)) {
       ScheduledUser scheduledUser = readyCheck.getScheduledUsers().get(userId);
-      long readyTimeMs = scheduledUser.getReadyTimestamp();
+      long readyTimeMs = scheduledUser.readyTimestamp();
       long minutesLeft = (readyTimeMs - System.currentTimeMillis()) / 60000;
 
       if (minutesLeft <= 0) {
@@ -1216,14 +1151,10 @@ public class ReadyCheckManager {
         .setEmbeds(embed.build())
         .setComponents(ActionRow.of(mainButtons), ActionRow.of(saveButton))
         .queue(
-            response -> {
-              response
-                  .retrieveOriginal()
-                  .queue(
-                      message -> {
-                        setReadyCheckMessageId(readyCheckId, message.getId());
-                      });
-            });
+            response ->
+                response
+                    .retrieveOriginal()
+                    .queue(message -> setReadyCheckMessageId(readyCheckId, message.getId())));
   }
 
   private static void handleSelectMenuResponse(
@@ -1238,14 +1169,10 @@ public class ReadyCheckManager {
         .setEmbeds(embed.build())
         .setComponents(ActionRow.of(mainButtons), ActionRow.of(saveButton))
         .queue(
-            response -> {
-              response
-                  .retrieveOriginal()
-                  .queue(
-                      message -> {
-                        setReadyCheckMessageId(readyCheckId, message.getId());
-                      });
-            });
+            response ->
+                response
+                    .retrieveOriginal()
+                    .queue(message -> setReadyCheckMessageId(readyCheckId, message.getId())));
   }
 
   private static int getReadyCount(ReadyCheck readyCheck) {
@@ -1276,12 +1203,9 @@ public class ReadyCheckManager {
         .allMatch(userId -> readyCheck.getReadyUsers().contains(userId));
   }
 
-  private static String formatTimeForDisplay(
-      String originalInput, long delayMinutes, LocalTime readyTime) {
-    if (originalInput.matches("\\d+")) {
-      return delayMinutes + " minutes";
-    } else {
-      return readyTime.format(DateTimeFormatter.ofPattern("h:mm a"));
+  private static void formatTimeForDisplay(String originalInput, LocalTime readyTime) {
+    if (!originalInput.matches("\\d+")) {
+      readyTime.format(DateTimeFormatter.ofPattern("h:mm a"));
     }
   }
 
@@ -1296,7 +1220,17 @@ public class ReadyCheckManager {
 
   private static void loadSavedConfigurations() {
     File file = new File(SAVE_FILE);
+
+    File parentDir = file.getParentFile();
+    if (parentDir != null && !parentDir.exists()) {
+      boolean created = parentDir.mkdirs();
+      if (created) {
+        System.out.println("Created config directory: " + parentDir.getAbsolutePath());
+      }
+    }
+
     if (!file.exists()) {
+      System.out.println("No existing configuration file found at: " + file.getAbsolutePath());
       return;
     }
 
@@ -1305,28 +1239,23 @@ public class ReadyCheckManager {
       Map<String, SavedReadyCheck> loaded = gson.fromJson(reader, type);
       if (loaded != null) {
         savedReadyChecks.putAll(loaded);
+        System.out.println("Loaded " + loaded.size() + " saved ready check configurations");
       }
     } catch (IOException e) {
       System.err.println("Failed to load configurations: " + e.getMessage());
     }
   }
 
-  public static class ScheduledUser {
-    private final long readyTimestamp;
-    private final ScheduledFuture<?> reminderFuture;
-
-    public ScheduledUser(long readyTimestamp, ScheduledFuture<?> reminderFuture) {
-      this.readyTimestamp = readyTimestamp;
-      this.reminderFuture = reminderFuture;
+  private static String getConfigFilePath() {
+    File dockerPath = new File("/app/data");
+    if (dockerPath.exists() && dockerPath.isDirectory()) {
+      return "/app/data/saved_ready_checks.json";
     }
 
-    public long getReadyTimestamp() {
-      return readyTimestamp;
-    }
+    return "saved_ready_checks.json";
+  }
 
-    public ScheduledFuture<?> getReminderFuture() {
-      return reminderFuture;
-    }
+  public record ScheduledUser(long readyTimestamp, ScheduledFuture<?> reminderFuture) {
 
     public void cancel() {
       if (reminderFuture != null && !reminderFuture.isDone()) {
@@ -1351,7 +1280,6 @@ public class ReadyCheckManager {
     private String messageId;
     private String completionMessageId;
     private ReadyCheckStatus status;
-    private long lastInteractionTime;
     private final long createdTime;
     private String description;
 
@@ -1374,7 +1302,6 @@ public class ReadyCheckManager {
       this.passedUsers = new HashSet<>();
       this.status = ReadyCheckStatus.ACTIVE;
       this.createdTime = System.currentTimeMillis();
-      this.lastInteractionTime = System.currentTimeMillis();
       this.scheduledUsers = new HashMap<>();
       this.scheduledUntilFutures = new HashMap<>();
     }
@@ -1439,10 +1366,6 @@ public class ReadyCheckManager {
       return status;
     }
 
-    public long getLastInteractionTime() {
-      return lastInteractionTime;
-    }
-
     public long getCreatedTime() {
       return createdTime;
     }
@@ -1463,10 +1386,6 @@ public class ReadyCheckManager {
       this.status = status;
     }
 
-    public void setLastInteractionTime(long lastInteractionTime) {
-      this.lastInteractionTime = lastInteractionTime;
-    }
-
     public void setDescription(String description) {
       this.description = description;
     }
@@ -1476,17 +1395,7 @@ public class ReadyCheckManager {
     private String roleId;
     private List<String> userIds;
     private final boolean userBased;
-    private boolean mentionPeople = true;
-
-    public SavedReadyCheck(String roleId, boolean userBased) {
-      this.roleId = roleId;
-      this.userBased = userBased;
-    }
-
-    public SavedReadyCheck(List<String> userIds, boolean userBased) {
-      this.userIds = userIds;
-      this.userBased = userBased;
-    }
+    private final boolean mentionPeople;
 
     public SavedReadyCheck(String roleId, boolean userBased, boolean mentionPeople) {
       this.roleId = roleId;
@@ -1514,10 +1423,6 @@ public class ReadyCheckManager {
 
     public boolean getMentionPeople() {
       return mentionPeople;
-    }
-
-    public void setMentionPeople(boolean mentionPeople) {
-      this.mentionPeople = mentionPeople;
     }
   }
 }

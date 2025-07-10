@@ -61,10 +61,12 @@ public class ReadyCommand implements Command {
     if (parsed.getAllMembers().isEmpty()) {
       event
           .reply(
-              "❌ No valid targets found! Examples:\n"
-                  + "• `@GameRole` - Ready check for a role\n"
-                  + "• `@Alice @Bob @Charlie` - Ready check for specific users\n"
-                  + "• `@GameRole @Alice @Bob` - Ready check for role + additional users")
+              """
+              ❌ No valid targets found! Examples:
+              • `@GameRole` - Ready check for a role
+              • `@Alice @Bob @Charlie` - Ready check for specific users
+              • `@GameRole @Alice @Bob` - Ready check for role + additional users\
+              """)
           .setEphemeral(true)
           .queue();
       return;
@@ -153,7 +155,7 @@ public class ReadyCommand implements Command {
           // Try to find member by name
           List<Member> foundMembers = event.getGuild().getMembersByEffectiveName(part, true);
           if (!foundMembers.isEmpty()) {
-            result.addMember(foundMembers.get(0));
+            result.addMember(foundMembers.getFirst());
           }
         }
       }
@@ -189,11 +191,10 @@ public class ReadyCommand implements Command {
     return desc.toString();
   }
 
-  // Helper class to track what was parsed
   private static class ParsedTargets {
-    private Set<Role> roles = new HashSet<>();
-    private Set<Member> directUsers = new HashSet<>();
-    private Set<Member> allMembers = new HashSet<>();
+    private final Set<Role> roles = new HashSet<>();
+    private final Set<Member> directUsers = new HashSet<>();
+    private final Set<Member> allMembers = new HashSet<>();
 
     public void addRole(Role role) {
       roles.add(role);
@@ -233,11 +234,13 @@ public class ReadyCommand implements Command {
     if (savedChecks.isEmpty()) {
       event
           .reply(
-              "No saved ready check configurations found!\n"
-                  + "**Usage:**\n"
-                  + "• `/ready targets:@RoleName` - Ready check for a role\n"
-                  + "• `/ready targets:@user1 @user2` - Ready check for specific users\n"
-                  + "• Use 'Save for Later' button to save configurations")
+              """
+              No saved ready check configurations found!
+              **Usage:**
+              • `/ready targets:@RoleName` - Ready check for a role
+              • `/ready targets:@user1 @user2` - Ready check for specific users
+              • Use 'Save for Later' button to save configurations\
+              """)
           .setEphemeral(true)
           .queue();
       return;
@@ -245,7 +248,7 @@ public class ReadyCommand implements Command {
 
     if (savedChecks.size() == 1) {
       // Only one saved config, use it directly
-      startReadyCheckFromSaved(event, savedChecks.get(0), initiator, channel, mentionPeople);
+      startReadyCheckFromSaved(event, savedChecks.getFirst(), initiator, channel, mentionPeople);
     } else {
       // Multiple saved configs, let user choose
       StringSelectMenu.Builder menuBuilder =

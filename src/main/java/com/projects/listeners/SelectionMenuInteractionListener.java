@@ -22,10 +22,10 @@ public class SelectionMenuInteractionListener extends ListenerAdapter {
   }
 
   private void handleSavedReadySelection(StringSelectInteractionEvent event) {
-    String selectedValue = event.getValues().get(0);
+    String selectedValue = event.getValues().getFirst();
     Member initiator = event.getMember();
     TextChannel channel = event.getChannel().asTextChannel();
-    String guildId = event.getGuild().getId();
+    String guildId = Objects.requireNonNull(event.getGuild()).getId();
 
     // Extract mentionPeople parameter from component ID
     String componentId = event.getComponentId();
