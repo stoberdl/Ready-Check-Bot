@@ -6,6 +6,10 @@ services:
     container_name: ready-check-bot
     environment:
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - TZ=America/New_York
     volumes:
       - ./data:/app/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
     restart: unless-stopped
+

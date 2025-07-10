@@ -19,8 +19,11 @@ import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEve
 import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
 import net.dv8tion.jda.api.interactions.components.ActionRow;
 import net.dv8tion.jda.api.interactions.components.buttons.Button;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class ReadyCheckManager {
+  private static final Logger logger = LoggerFactory.getLogger(ReadyCheckManager.class);
   private static final Map<String, ReadyCheck> activeReadyChecks = new ConcurrentHashMap<>();
   private static final Map<String, SavedReadyCheck> savedReadyChecks = new ConcurrentHashMap<>();
   private static final Map<String, Boolean> mentionPreferences = new ConcurrentHashMap<>();
@@ -28,6 +31,8 @@ public class ReadyCheckManager {
   private static final String SAVE_FILE = getConfigFilePath();
   private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
   private static final long TWO_HOURS_MS = TimeUnit.HOURS.toMillis(2);
+  private static final ZoneId SYSTEM_TIMEZONE = ZoneId.systemDefault();
+  private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("h:mm a");
   private static JDA globalJDA;
 
   static {
@@ -38,40 +43,6 @@ public class ReadyCheckManager {
   public enum ReadyCheckStatus {
     ACTIVE,
     COMPLETED
-  }
-
-  private static void startPeriodicUpdater() {
-    scheduler.scheduleWithFixedDelay(
-        () -> {
-          try {
-            updateAllReadyCheckCountdowns();
-          } catch (Exception e) {
-            System.err.println("Error in periodic updater: " + e.getMessage());
-          }
-        },
-        1,
-        1,
-        TimeUnit.MINUTES);
-  }
-
-  private static void updateAllReadyCheckCountdowns() {
-    if (globalJDA == null) return;
-
-    for (ReadyCheck readyCheck : activeReadyChecks.values()) {
-      if (readyCheck.getStatus() != ReadyCheckStatus.ACTIVE) continue;
-
-      boolean embedNeedsUpdate;
-
-      embedNeedsUpdate = checkAndReadyUsersInVoice(readyCheck);
-
-      if (!readyCheck.getScheduledUsers().isEmpty() || embedNeedsUpdate) {
-        updateReadyCheckEmbed(readyCheck.getId(), globalJDA);
-      }
-
-      if (embedNeedsUpdate && checkIfAllReady(readyCheck.getId())) {
-        notifyAllReady(readyCheck.getId(), globalJDA);
-      }
-    }
   }
 
   public static void setJDA(JDA jda) {
@@ -93,9 +64,7 @@ public class ReadyCheckManager {
       Member initiator,
       String description) {
     ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
-    if (readyCheck == null) {
-      return;
-    }
+    if (readyCheck == null) return;
 
     JDA jda = getJDAFromEvent(event);
     if (globalJDA == null && jda != null) {
@@ -110,65 +79,25 @@ public class ReadyCheckManager {
     List<Button> saveButton = createSaveButton(readyCheckId);
     String mentions = createMentions(readyCheck, jda);
 
-    if (event instanceof SlashCommandInteractionEvent) {
+    if (event instanceof SlashCommandInteractionEvent slashEvent) {
       handleSlashCommandResponse(
-          (SlashCommandInteractionEvent) event,
-          embed,
-          mainButtons,
-          saveButton,
-          mentions,
-          readyCheckId);
-    } else if (event instanceof StringSelectInteractionEvent) {
-      handleSelectMenuResponse(
-          (StringSelectInteractionEvent) event,
-          embed,
-          mainButtons,
-          saveButton,
-          mentions,
-          readyCheckId);
+          slashEvent, embed, mainButtons, saveButton, mentions, readyCheckId);
+    } else if (event instanceof StringSelectInteractionEvent selectEvent) {
+      handleSelectMenuResponse(selectEvent, embed, mainButtons, saveButton, mentions, readyCheckId);
     }
-  }
-
-  private static String buildCheckDescription(
-      Member initiator, List<Member> targetMembers, String originalDescription) {
-    boolean initiatorInTargets = targetMembers.contains(initiator);
-    int totalUsers = targetMembers.size() + (initiatorInTargets ? 0 : 1);
-
-    if (originalDescription.contains("specific users")) {
-      return "**"
-          + initiator.getEffectiveName()
-          + "** started a ready check for "
-          + totalUsers
-          + " users";
-    }
-
-    return originalDescription;
   }
 
   public static boolean isReadyCheckOngoing(String readyCheckId) {
     ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
-    if (readyCheck == null) {
-      return false;
-    }
-
-    return !allNonPassedReady(readyCheck);
+    return readyCheck != null && !allNonPassedReady(readyCheck);
   }
 
   public static String findExistingReadyCheck(
       String guildId, SavedReadyCheck savedCheck, String initiatorId) {
     return activeReadyChecks.values().stream()
         .filter(check -> check.getGuildId().equals(guildId))
-        .filter(check -> isReadyCheckOngoing(check.getId())) // Only return non-completed checks
-        .filter(
-            check -> {
-              if (savedCheck.isUserBased()) {
-                Set<String> checkUserIds = new HashSet<>(check.getTargetUsers());
-                checkUserIds.add(initiatorId);
-                return checkUserIds.equals(new HashSet<>(savedCheck.getUserIds()));
-              } else {
-                return savedCheck.getRoleId().equals(check.getRoleId());
-              }
-            })
+        .filter(check -> isReadyCheckOngoing(check.getId()))
+        .filter(check -> matchesSavedCheck(check, savedCheck, initiatorId))
         .map(ReadyCheck::getId)
         .findFirst()
         .orElse(null);
@@ -177,15 +106,6 @@ public class ReadyCheckManager {
   public static String findExistingReadyCheck(
       String guildId, List<String> targetUserIds, String initiatorId) {
     return findExistingReadyCheckInternal(guildId, createUserSet(targetUserIds, initiatorId));
-  }
-
-  private static JDA getJDAFromEvent(Object event) {
-    if (event instanceof SlashCommandInteractionEvent) {
-      return ((SlashCommandInteractionEvent) event).getJDA();
-    } else if (event instanceof StringSelectInteractionEvent) {
-      return ((StringSelectInteractionEvent) event).getJDA();
-    }
-    return null;
   }
 
   public static String createUserReadyCheck(
@@ -204,281 +124,80 @@ public class ReadyCheckManager {
         guildId, channelId, initiatorId, roleId, targetMembers, "**Ready Check** for role members");
   }
 
-  /**
-   * Parse time input for "r in X" context - always treats numbers as minutes Examples: "5", "30",
-   * "120"
-   */
-  private static long parseTimeInputAsMinutes(String timeInput) {
-    String input = timeInput.trim();
-
-    if (input.matches("\\d+")) {
-      long minutes = Long.parseLong(input);
-      if (minutes >= 1 && minutes <= 1440) {
-        return minutes;
-      } else {
-        throw new IllegalArgumentException("Minutes must be between 1 and 1440");
-      }
-    }
-
-    throw new IllegalArgumentException(
-        "For 'r in X', please use just the number of minutes (e.g., '5', '30')");
-  }
-
-  /**
-   * Parse time input for "r at X" context - treats as time with smart AM/PM Examples: "5", "7:30",
-   * "7pm", "19:30"
-   */
-  private static long parseTimeInputAsTime(String timeInput) {
-    return parseAsTime(timeInput.trim().toLowerCase());
-  }
-
-  private static long parseAsTime(String input) {
-    LocalTime now = LocalTime.now();
-    LocalTime targetTime;
-
-    try {
-      // Handle explicit AM/PM first
-      if (input.contains("pm") || input.contains("am")) {
-        targetTime = parseExplicitAmPm(input);
-      }
-      // Handle 24-hour format
-      else if (input.contains(":") && is24HourFormat(input)) {
-        targetTime = parse24HourFormat(input);
-      } else {
-        targetTime = parseWithSmartDetection(input, now);
-      }
-
-      return calculateMinutesUntil(now, targetTime);
-
-    } catch (NumberFormatException e) {
-      throw new IllegalArgumentException("Invalid time format: " + input);
-    }
-  }
-
-  /** Parse explicit AM/PM formats like "7pm", "7:30am" */
-  private static LocalTime parseExplicitAmPm(String input) {
-    String normalizedInput = input.toUpperCase().replaceAll("\\s+", "");
-
-    if (normalizedInput.matches("\\d+(PM|AM)")) {
-      // Simple hour like "7PM"
-      int hour = Integer.parseInt(normalizedInput.replaceAll("[^0-9]", ""));
-      boolean isPM = normalizedInput.contains("PM");
-
-      if (hour >= 1 && hour <= 12) {
-        if (isPM) {
-          return LocalTime.of(hour == 12 ? 12 : hour + 12, 0);
-        } else {
-          return LocalTime.of(hour == 12 ? 0 : hour, 0);
-        }
-      } else {
-        throw new IllegalArgumentException("Hour must be between 1 and 12");
-      }
-    } else {
-      // Handle formats like "7:30PM"
-      return LocalTime.parse(normalizedInput, DateTimeFormatter.ofPattern("h:mma"));
-    }
-  }
-
-  private static boolean is24HourFormat(String input) {
-    String[] parts = input.split(":");
-    if (parts.length >= 1) {
-      try {
-        int hour = Integer.parseInt(parts[0]);
-        return hour >= 13 || hour == 0;
-      } catch (NumberFormatException e) {
-        return false;
-      }
-    }
-    return false;
-  }
-
-  private static LocalTime parse24HourFormat(String input) {
-    String[] parts = input.split(":");
-    if (parts.length == 2) {
-      int hour = Integer.parseInt(parts[0]);
-      int minute = Integer.parseInt(parts[1]);
-
-      if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
-        return LocalTime.of(hour, minute);
-      }
-    }
-    throw new IllegalArgumentException("Invalid 24-hour format");
-  }
-
-  private static LocalTime parseWithSmartDetection(String input, LocalTime now) {
-    int hour, minute = 0;
-
-    if (input.contains(":")) {
-      String[] parts = input.split(":");
-      hour = Integer.parseInt(parts[0]);
-      minute = Integer.parseInt(parts[1]);
-
-      if (minute < 0 || minute > 59) {
-        throw new IllegalArgumentException("Invalid minutes");
-      }
-    } else {
-      hour = Integer.parseInt(input);
-    }
-
-    if (hour < 1 || hour > 12) {
-      throw new IllegalArgumentException("Hour must be between 1 and 12 for ambiguous format");
-    }
-
-    return smartAmPmDetection(hour, minute, now);
-  }
-
-  private static LocalTime smartAmPmDetection(int hour, int minute, LocalTime now) {
-    LocalTime amTime = LocalTime.of(hour == 12 ? 0 : hour, minute);
-    LocalTime pmTime = LocalTime.of(hour == 12 ? 12 : hour + 12, minute);
-
-    int currentHour = now.getHour();
-
-    if (currentHour >= 22 || currentHour <= 5) {
-      return amTime.isAfter(now) ? amTime : pmTime;
-    }
-
-    if (currentHour <= 11) {
-      return amTime.isAfter(now) ? amTime : pmTime;
-    }
-
-    if (pmTime.isAfter(now)) {
-      return pmTime;
-    }
-
-    return amTime.plusHours(24);
-  }
-
-  private static long calculateMinutesUntil(LocalTime now, LocalTime targetTime) {
-    LocalDateTime nowDateTime = LocalDateTime.of(LocalDate.now(), now);
-    LocalDateTime targetDateTime;
-
-    if (targetTime.isAfter(now)) {
-      targetDateTime = LocalDateTime.of(LocalDate.now(), targetTime);
-    } else {
-      targetDateTime = LocalDateTime.of(LocalDate.now().plusDays(1), targetTime);
-    }
-
-    Duration duration = Duration.between(nowDateTime, targetDateTime);
-    return Math.max(1, duration.toMinutes());
-  }
-
-  private static void cancelExistingScheduledUser(ReadyCheck readyCheck, String userId) {
-    ScheduledUser existingScheduled = readyCheck.getScheduledUsers().remove(userId);
-    if (existingScheduled != null) {
-      existingScheduled.cancel();
-    }
-
-    // Also cancel "until" future if exists
-    ScheduledFuture<?> existingUntil = readyCheck.getScheduledUntilFutures().remove(userId);
-    if (existingUntil != null && !existingUntil.isDone()) {
-      existingUntil.cancel(false);
-    }
-  }
-
   public static void scheduleReadyAt(
       String readyCheckId, String timeInput, String userId, JDA jda) {
-    try {
-      long delayMinutes = parseTimeInputAsMinutes(timeInput);
-      ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
-      if (readyCheck == null) {
-        throw new IllegalArgumentException("Ready check not found");
-      }
+    long delayMinutes = parseTimeInputAsMinutes(timeInput);
+    ReadyCheck readyCheck = getReadyCheckOrThrow(readyCheckId);
 
-      ensureUserInTargets(readyCheck, userId);
+    ensureUserInTargets(readyCheck, userId);
+    cancelExistingScheduledUser(readyCheck, userId);
 
-      cancelExistingScheduledUser(readyCheck, userId);
-
-      long currentTimeMs = System.currentTimeMillis();
-      long targetTimeMs = currentTimeMs + (delayMinutes * 60 * 1000);
-      targetTimeMs = (targetTimeMs / 60000) * 60000;
-
-      readyCheck.getReadyUsers().remove(userId);
-      readyCheck.getPassedUsers().remove(userId);
-
-      ScheduledFuture<?> reminderFuture =
-          scheduler.schedule(
-              () -> sendReadyReminder(readyCheckId, userId, jda), delayMinutes, TimeUnit.MINUTES);
-
-      ScheduledUser scheduledUser = new ScheduledUser(targetTimeMs, reminderFuture);
-      readyCheck.getScheduledUsers().put(userId, scheduledUser);
-
-    } catch (Exception e) {
-      throw new IllegalArgumentException("Invalid time format: " + timeInput);
-    }
+    Instant targetTime = Instant.now().plus(Duration.ofMinutes(delayMinutes));
+    scheduleUserReady(readyCheck, userId, targetTime, jda);
   }
 
   public static String scheduleReadyAtSmart(
       String readyCheckId, String timeInput, String userId, JDA jda) {
-    ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
-    if (readyCheck == null) {
-      throw new IllegalArgumentException("Ready check not found");
-    }
+    ReadyCheck readyCheck = getReadyCheckOrThrow(readyCheckId);
 
-    long minutesUntilReady = parseTimeInputAsTime(timeInput);
-
-    if (minutesUntilReady <= 0) {
-      throw new IllegalArgumentException("Time must be in the future");
-    }
-
+    LocalTime targetTime = parseTargetTime(timeInput);
     cancelExistingScheduledUser(readyCheck, userId);
-
     readyCheck.getReadyUsers().remove(userId);
-    readyCheck.getUserTimers().remove(userId);
 
-    long currentTimeMs = System.currentTimeMillis();
-    long targetTimeMs = currentTimeMs + (minutesUntilReady * 60 * 1000);
-    targetTimeMs = (targetTimeMs / 60000) * 60000;
+    LocalDateTime now = LocalDateTime.now(SYSTEM_TIMEZONE);
+    LocalDateTime target = LocalDateTime.of(now.toLocalDate(), targetTime);
+
+    if (!target.isAfter(now)) {
+      target = target.plusDays(1);
+    }
+
+    Duration delay = Duration.between(now, target);
+    long delayMinutes = delay.toMinutes();
+    if (delay.toSecondsPart() > 0) {
+      delayMinutes++;
+    }
 
     ScheduledFuture<?> reminderFuture =
         scheduler.schedule(
-            () -> sendReadyReminder(readyCheckId, userId, jda),
-            minutesUntilReady,
-            TimeUnit.MINUTES);
+            () -> sendReadyReminder(readyCheckId, userId, jda), delayMinutes, TimeUnit.MINUTES);
 
-    ScheduledUser scheduledUser = new ScheduledUser(targetTimeMs, reminderFuture);
+    ScheduledUser scheduledUser =
+        new ScheduledUser(
+            target.atZone(SYSTEM_TIMEZONE).toInstant().toEpochMilli(), reminderFuture);
     readyCheck.getScheduledUsers().put(userId, scheduledUser);
 
-    Instant targetInstant = Instant.ofEpochMilli(targetTimeMs);
-    LocalTime targetTime = LocalTime.ofInstant(targetInstant, ZoneId.systemDefault());
-    DateTimeFormatter formatter = DateTimeFormatter.ofPattern("h:mm a");
-    return targetTime.format(formatter);
+    return targetTime.format(TIME_FORMATTER);
   }
 
   public static String scheduleReadyUntil(
       String readyCheckId, String timeInput, String userId, JDA jda) {
-    try {
-      long delayMinutes = parseTimeInputAsTime(timeInput);
-      ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
-      if (readyCheck == null) {
-        throw new IllegalArgumentException("Ready check not found");
-      }
+    LocalTime targetTime = parseTargetTime(timeInput);
+    ReadyCheck readyCheck = getReadyCheckOrThrow(readyCheckId);
+    ensureUserInTargets(readyCheck, userId);
 
-      ensureUserInTargets(readyCheck, userId);
+    LocalDateTime now = LocalDateTime.now(SYSTEM_TIMEZONE);
+    LocalDateTime target = LocalDateTime.of(now.toLocalDate(), targetTime);
 
-      long currentTimeMs = System.currentTimeMillis();
-      long untilTimestamp = currentTimeMs + (delayMinutes * 60 * 1000);
-      untilTimestamp = (untilTimestamp / 60000) * 60000;
-
-      scheduler.schedule(
-          () -> autoPassUser(readyCheckId, userId, jda), delayMinutes, TimeUnit.MINUTES);
-
-      String discordTimestamp = "<t:" + (untilTimestamp / 1000) + ":t>";
-      readyCheck.getUserUntilTimes().put(userId, discordTimestamp);
-
-      return discordTimestamp;
-    } catch (Exception e) {
-      throw new IllegalArgumentException("Invalid time format: " + timeInput);
+    if (!target.isAfter(now)) {
+      target = target.plusDays(1);
     }
-  }
 
-  /** Helper method to format timestamps for display consistency */
-  private static String formatScheduledTime(long timestampMs, long minutesLeft) {
-    if (minutesLeft >= 60) {
-      long discordTimestamp = timestampMs / 1000;
-      return "<t:" + discordTimestamp + ":t>";
-    } else {
-      return minutesLeft + "min";
+    Duration delay = Duration.between(now, target);
+    long delayMinutes = delay.toMinutes();
+    if (delay.toSecondsPart() > 0) {
+      delayMinutes++;
     }
+
+    ScheduledFuture<?> untilFuture =
+        scheduler.schedule(
+            () -> autoPassUser(readyCheckId, userId, jda), delayMinutes, TimeUnit.MINUTES);
+
+    readyCheck.getScheduledUntilFutures().put(userId, untilFuture);
+    String discordTimestamp =
+        "<t:" + target.atZone(SYSTEM_TIMEZONE).toInstant().getEpochSecond() + ":t>";
+    readyCheck.getUserUntilTimes().put(userId, discordTimestamp);
+
+    return discordTimestamp;
   }
 
   public static void updateReadyCheckEmbed(String readyCheckId, JDA jda) {
@@ -491,70 +210,30 @@ public class ReadyCheckManager {
     TextChannel channel = guild.getTextChannelById(readyCheck.getChannelId());
     if (channel == null) return;
 
-    boolean wasCompleted = readyCheck.getStatus() == ReadyCheckStatus.COMPLETED;
-    boolean nowCompleted = allNonPassedReady(readyCheck);
-
-    if (wasCompleted && !nowCompleted && readyCheck.getCompletionMessageId() != null) {
-      channel
-          .retrieveMessageById(readyCheck.getCompletionMessageId())
-          .queue(message -> message.delete().queue(null, error -> {}), error -> {});
-      readyCheck.setCompletionMessageId(null);
-      readyCheck.setStatus(ReadyCheckStatus.ACTIVE);
-    }
-
+    handleStatusTransition(readyCheck, channel);
     cleanupExpiredScheduledUsers(readyCheck);
-
-    channel
-        .retrieveMessageById(readyCheck.getMessageId())
-        .queue(
-            message -> {
-              EmbedBuilder embed =
-                  buildReadyCheckEmbed(readyCheck, jda, readyCheck.getDescription());
-              List<Button> mainButtons = createMainButtons(readyCheckId);
-              List<Button> saveButton = createSaveButton(readyCheckId);
-
-              message
-                  .editMessageEmbeds(embed.build())
-                  .setComponents(ActionRow.of(mainButtons), ActionRow.of(saveButton))
-                  .queue();
-            },
-            error -> {
-              // Message might have been deleted
-            });
-  }
-
-  private static void cleanupExpiredScheduledUsers(ReadyCheck readyCheck) {
-    long currentTime = System.currentTimeMillis();
-    Set<String> expiredUsers = new HashSet<>();
-
-    for (Map.Entry<String, ScheduledUser> entry : readyCheck.getScheduledUsers().entrySet()) {
-      if (entry.getValue().readyTimestamp() <= currentTime) {
-        expiredUsers.add(entry.getKey());
-      }
-    }
-
-    for (String userId : expiredUsers) {
-      readyCheck.getScheduledUsers().remove(userId);
-    }
+    updateMessage(readyCheck, channel, readyCheckId);
   }
 
   public static boolean markUserReady(String readyCheckId, String userId) {
     ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
     if (readyCheck == null) {
+      logger.warn(
+          "Attempted to mark user {} ready for non-existent ready check: {}", userId, readyCheckId);
       return false;
     }
 
     cancelExistingScheduledUser(readyCheck, userId);
-
     readyCheck.getUserTimers().remove(userId);
     readyCheck.getReadyUsers().add(userId);
 
     boolean allReady = readyCheck.getReadyUsers().containsAll(readyCheck.getTargetUsers());
-
     if (allReady && readyCheck.getStatus() == ReadyCheckStatus.ACTIVE) {
       readyCheck.setStatus(ReadyCheckStatus.COMPLETED);
+      logger.info("Ready check completed: {}", readyCheckId);
     }
 
+    logger.debug("User {} marked as ready for ready check: {}", userId, readyCheckId);
     return allReady;
   }
 
@@ -563,86 +242,15 @@ public class ReadyCheckManager {
     if (readyCheck == null) return;
 
     Guild guild = jda.getGuildById(readyCheck.getGuildId());
-    if (guild == null) return;
-
-    TextChannel channel = guild.getTextChannelById(readyCheck.getChannelId());
+    TextChannel channel = getChannelFromGuild(guild, readyCheck.getChannelId());
     if (channel == null) return;
 
     readyCheck.setStatus(ReadyCheckStatus.COMPLETED);
-
-    Set<String> allUsers = new HashSet<>(readyCheck.getTargetUsers());
-    allUsers.add(readyCheck.getInitiatorId());
-
-    List<String> readyUserNames =
-        allUsers.stream()
-            .filter(userId -> readyCheck.getReadyUsers().contains(userId))
-            .filter(userId -> !readyCheck.getPassedUsers().contains(userId))
-            .map(
-                userId -> {
-                  Member member = guild.getMemberById(userId);
-                  return member != null ? member.getEffectiveName() : null;
-                })
-            .filter(Objects::nonNull)
-            .collect(Collectors.toList());
-
-    // Create mentions for notification (if enabled)
-    String readyUserMentions = "";
-    if (getMentionPreference(readyCheckId)) {
-      readyUserMentions =
-          allUsers.stream()
-              .filter(userId -> readyCheck.getReadyUsers().contains(userId))
-              .filter(userId -> !readyCheck.getPassedUsers().contains(userId))
-              .map(
-                  userId -> {
-                    Member member = guild.getMemberById(userId);
-                    return member != null ? member.getAsMention() : null;
-                  })
-              .filter(Objects::nonNull)
-              .collect(Collectors.joining(" "));
-    }
+    Set<String> allUsers = getAllUsers(readyCheck);
+    List<String> readyUserNames = getReadyUserNames(readyCheck, allUsers, guild);
+    String readyUserMentions = createReadyUserMentions(readyCheck, allUsers, guild, readyCheckId);
 
     replaceReadyCheckWithSummary(readyCheckId, jda, readyUserNames, readyUserMentions);
-  }
-
-  private static void replaceReadyCheckWithSummary(
-      String readyCheckId, JDA jda, List<String> readyUserNames, String mentions) {
-    ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
-    if (readyCheck == null || readyCheck.getMessageId() == null) return;
-
-    Guild guild = jda.getGuildById(readyCheck.getGuildId());
-    if (guild == null) return;
-
-    TextChannel channel = guild.getTextChannelById(readyCheck.getChannelId());
-    if (channel == null) return;
-
-    StringBuilder memberList = new StringBuilder();
-    for (String userName : readyUserNames) {
-      memberList.append("✅ ").append(userName).append("\n");
-    }
-
-    EmbedBuilder summaryEmbed =
-        new EmbedBuilder()
-            .setTitle("✅ Ready Check Complete")
-            .setDescription(readyCheck.getDescription() + "\n\n" + memberList)
-            .setColor(Color.GREEN)
-            .setTimestamp(Instant.now());
-
-    channel
-        .retrieveMessageById(readyCheck.getMessageId())
-        .queue(
-            oldMessage -> {
-              oldMessage.delete().queue(null, error -> {});
-
-              channel
-                  .sendMessage(mentions)
-                  .setEmbeds(summaryEmbed.build())
-                  .queue(newMessage -> readyCheck.setMessageId(newMessage.getId()));
-            },
-            error ->
-                channel
-                    .sendMessage(mentions)
-                    .setEmbeds(summaryEmbed.build())
-                    .queue(newMessage -> readyCheck.setMessageId(newMessage.getId())));
   }
 
   public static void ensureUserInReadyCheck(String readyCheckId, String userId) {
@@ -663,7 +271,6 @@ public class ReadyCheckManager {
       return false;
     } else {
       cancelExistingScheduledUser(readyCheck, userId);
-
       readyCheck.getReadyUsers().add(userId);
       readyCheck.getPassedUsers().remove(userId);
       readyCheck.getUserUntilTimes().remove(userId);
@@ -689,15 +296,11 @@ public class ReadyCheckManager {
 
   public static void unmarkUserPassed(String readyCheckId, String userId) {
     ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
-    if (readyCheck == null) return;
-
-    readyCheck.getPassedUsers().remove(userId);
+    if (readyCheck != null) {
+      readyCheck.getPassedUsers().remove(userId);
+    }
   }
 
-  /**
-   * Updated findActiveReadyCheckForUser to include passed users This allows "r" commands to work
-   * even if user was previously passed
-   */
   public static String findActiveReadyCheckForUser(String guildId, String userId) {
     long twoHoursAgo = System.currentTimeMillis() - TWO_HOURS_MS;
 
@@ -705,75 +308,35 @@ public class ReadyCheckManager {
         .filter(readyCheck -> readyCheck.getGuildId().equals(guildId))
         .filter(readyCheck -> readyCheck.getCreatedTime() >= twoHoursAgo)
         .filter(readyCheck -> readyCheck.getStatus() == ReadyCheckStatus.ACTIVE)
-        .filter(
-            readyCheck -> {
-              // Include user if they're in target users, OR if they're passed (they can re-engage)
-              return readyCheck.getTargetUsers().contains(userId)
-                  || readyCheck.getPassedUsers().contains(userId)
-                  || readyCheck.getInitiatorId().equals(userId);
-            })
+        .filter(readyCheck -> userCanEngageWithReadyCheck(readyCheck, userId))
         .map(ReadyCheck::getId)
         .findFirst()
         .orElse(null);
   }
 
-  /**
-   * Updated saveReadyCheck to prioritize most recently saved configs Removes duplicates and adds
-   * the new save to the end (most recent)
-   */
   public static void saveReadyCheck(String readyCheckId) {
     ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
-    if (readyCheck == null) return;
+    if (readyCheck == null) {
+      logger.warn("Attempted to save non-existent ready check: {}", readyCheckId);
+      return;
+    }
 
     String guildId = readyCheck.getGuildId();
     boolean mentionPeople = getMentionPreference(readyCheckId);
-    SavedReadyCheck newSavedCheck;
+    SavedReadyCheck newSavedCheck = createSavedCheck(readyCheck, mentionPeople);
 
-    if (readyCheck.getRoleId() != null) {
-      newSavedCheck = new SavedReadyCheck(readyCheck.getRoleId(), false, mentionPeople);
-    } else {
-      List<String> allUserIds = new ArrayList<>(readyCheck.getTargetUsers());
-      allUserIds.add(readyCheck.getInitiatorId());
-      newSavedCheck = new SavedReadyCheck(allUserIds, true, mentionPeople);
-    }
+    String newKey = createSavedCheckKey(guildId, newSavedCheck);
+    removeDuplicateConfigurations(guildId, newSavedCheck);
 
-    String newKey =
-        guildId
-            + "_"
-            + (newSavedCheck.isUserBased()
-                ? newSavedCheck.getUserIds().hashCode()
-                : newSavedCheck.getRoleId());
-
-    savedReadyChecks.remove(newKey);
-
-    // remove any other entries for this guild that match the same configuration
-    savedReadyChecks
-        .entrySet()
-        .removeIf(
-            entry -> {
-              String key = entry.getKey();
-              SavedReadyCheck savedCheck = entry.getValue();
-
-              if (!key.startsWith(guildId + "_")) return false;
-
-              if (savedCheck.isUserBased() == newSavedCheck.isUserBased()) {
-                if (savedCheck.isUserBased()) {
-                  Set<String> existingUsers = new HashSet<>(savedCheck.getUserIds());
-                  Set<String> newUsers = new HashSet<>(newSavedCheck.getUserIds());
-                  return existingUsers.equals(newUsers);
-                } else {
-                  return Objects.equals(savedCheck.getRoleId(), newSavedCheck.getRoleId());
-                }
-              }
-              return false;
-            });
-
-    // Add the new configuration (this will be at the end, making it most recent)
     savedReadyChecks.put(newKey, newSavedCheck);
     saveSavedConfigurations();
+
+    logger.info(
+        "Saved ready check configuration for guild: {}, type: {}",
+        guildId,
+        newSavedCheck.isUserBased() ? "user-based" : "role-based");
   }
 
-  /** Send ready check directly to channel (for message-based commands) */
   public static void sendReadyCheckToChannel(
       TextChannel channel,
       String readyCheckId,
@@ -810,7 +373,6 @@ public class ReadyCheckManager {
             .map(Map.Entry::getValue)
             .collect(Collectors.toList());
 
-    // Reverse the list so most recently saved appears first
     Collections.reverse(checks);
     return checks;
   }
@@ -820,15 +382,12 @@ public class ReadyCheckManager {
     if (readyCheck == null) return;
 
     Guild guild = jda.getGuildById(readyCheck.getGuildId());
-    if (guild == null) return;
-
-    TextChannel channel = guild.getTextChannelById(readyCheck.getChannelId());
+    TextChannel channel = getChannelFromGuild(guild, readyCheck.getChannelId());
     if (channel == null) return;
 
     EmbedBuilder embed = buildReadyCheckEmbed(readyCheck, jda, readyCheck.getDescription());
     List<Button> mainButtons = createMainButtons(readyCheckId);
     List<Button> saveButton = createSaveButton(readyCheckId);
-
     String mentions = createMentions(readyCheck, jda);
 
     channel
@@ -845,7 +404,461 @@ public class ReadyCheckManager {
     }
   }
 
-  // Private Helper Methods
+  private static void startPeriodicUpdater() {
+    scheduler.scheduleWithFixedDelay(
+        () -> {
+          try {
+            updateAllReadyCheckCountdowns();
+          } catch (Exception e) {
+            logger.error("Error in periodic updater: {}", e.getMessage(), e);
+          }
+        },
+        1,
+        1,
+        TimeUnit.MINUTES);
+  }
+
+  private static void updateAllReadyCheckCountdowns() {
+    if (globalJDA == null) return;
+
+    for (ReadyCheck readyCheck : activeReadyChecks.values()) {
+      if (readyCheck.getStatus() != ReadyCheckStatus.ACTIVE) continue;
+
+      boolean embedNeedsUpdate = checkAndReadyUsersInVoice(readyCheck);
+
+      if (!readyCheck.getScheduledUsers().isEmpty() || embedNeedsUpdate) {
+        updateReadyCheckEmbed(readyCheck.getId(), globalJDA);
+      }
+
+      if (embedNeedsUpdate && checkIfAllReady(readyCheck.getId())) {
+        notifyAllReady(readyCheck.getId(), globalJDA);
+      }
+    }
+  }
+
+  private static boolean checkAndReadyUsersInVoice(ReadyCheck readyCheck) {
+    Guild guild = globalJDA.getGuildById(readyCheck.getGuildId());
+    if (guild == null) return false;
+
+    boolean anyChanges = false;
+    Set<String> allUsers = getAllUsers(readyCheck);
+
+    for (String userId : allUsers) {
+      if (isUserAlreadyProcessed(readyCheck, userId)) continue;
+
+      Member member = guild.getMemberById(userId);
+      if (member == null) continue;
+
+      if (shouldAutoReadyUserInVoice(member)) {
+        autoReadyUserInVoice(readyCheck, userId);
+        anyChanges = true;
+      }
+    }
+
+    return anyChanges;
+  }
+
+  private static String buildCheckDescription(
+      Member initiator, List<Member> targetMembers, String originalDescription) {
+    boolean initiatorInTargets = targetMembers.contains(initiator);
+    int totalUsers = targetMembers.size() + (initiatorInTargets ? 0 : 1);
+
+    if (originalDescription.contains("specific users")) {
+      return "**"
+          + initiator.getEffectiveName()
+          + "** started a ready check for "
+          + totalUsers
+          + " users";
+    }
+
+    return originalDescription;
+  }
+
+  private static JDA getJDAFromEvent(Object event) {
+    return switch (event) {
+      case SlashCommandInteractionEvent slashEvent -> slashEvent.getJDA();
+      case StringSelectInteractionEvent selectEvent -> selectEvent.getJDA();
+      default -> null;
+    };
+  }
+
+  private static long parseTimeInputAsMinutes(String timeInput) {
+    String input = timeInput.trim();
+
+    if (input.matches("\\d+")) {
+      long minutes = Long.parseLong(input);
+      if (minutes >= 1 && minutes <= 1440) {
+        return minutes;
+      } else {
+        throw new IllegalArgumentException("Minutes must be between 1 and 1440");
+      }
+    }
+
+    throw new IllegalArgumentException(
+        "For 'r in X', please use just the number of minutes (e.g., '5', '30')");
+  }
+
+  private static LocalTime parseTargetTime(String timeInput) {
+    String input = timeInput.trim().toLowerCase();
+    LocalTime now = LocalTime.now(SYSTEM_TIMEZONE);
+
+    if (input.contains("pm") || input.contains("am")) {
+      return parseExplicitAmPm(input);
+    } else if (input.contains(":") && is24HourFormat(input)) {
+      return parse24HourFormat(input);
+    } else if (input.contains(":")) {
+      return parseTimeWithColon(input, now);
+    } else if (input.matches("\\d{3,4}")) {
+      return parseCompactTime(input, now);
+    } else {
+      return parseWithSmartDetection(input, now);
+    }
+  }
+
+  private static LocalTime parseTimeWithColon(String input, LocalTime now) {
+    String[] parts = input.split(":");
+    if (parts.length == 2) {
+      try {
+        int hour = Integer.parseInt(parts[0]);
+        int minute = Integer.parseInt(parts[1]);
+
+        if (minute < 0 || minute > 59) {
+          throw new IllegalArgumentException("Invalid minutes");
+        }
+
+        if (hour >= 1 && hour <= 12) {
+          return smartAmPmDetection(hour, minute, now);
+        } else {
+          throw new IllegalArgumentException("Hour must be between 1 and 12 for ambiguous format");
+        }
+      } catch (NumberFormatException e) {
+        throw new IllegalArgumentException("Invalid time format");
+      }
+    }
+    throw new IllegalArgumentException("Invalid time format");
+  }
+
+  private static LocalTime parseCompactTime(String input, LocalTime now) {
+    try {
+      if (input.length() == 3) {
+        int hour = Integer.parseInt(input.substring(0, 1));
+        int minute = Integer.parseInt(input.substring(1, 3));
+
+        if (minute < 0 || minute > 59) {
+          throw new IllegalArgumentException("Invalid minutes");
+        }
+
+        if (hour >= 1 && hour <= 9) {
+          return smartAmPmDetection(hour, minute, now);
+        }
+      } else if (input.length() == 4) {
+        int hour = Integer.parseInt(input.substring(0, 2));
+        int minute = Integer.parseInt(input.substring(2, 4));
+
+        if (minute < 0 || minute > 59) {
+          throw new IllegalArgumentException("Invalid minutes");
+        }
+
+        if (hour >= 1 && hour <= 12) {
+          return smartAmPmDetection(hour, minute, now);
+        }
+      }
+
+      throw new IllegalArgumentException("Invalid time format");
+    } catch (NumberFormatException e) {
+      throw new IllegalArgumentException("Invalid time format");
+    }
+  }
+
+  private static LocalTime parseExplicitAmPm(String input) {
+    String normalizedInput = input.toUpperCase().replaceAll("\\s+", "");
+
+    if (normalizedInput.matches("\\d+(PM|AM)")) {
+      int hour = Integer.parseInt(normalizedInput.replaceAll("[^0-9]", ""));
+      boolean isPM = normalizedInput.contains("PM");
+
+      if (hour >= 1 && hour <= 12) {
+        if (isPM) {
+          return LocalTime.of(hour == 12 ? 12 : hour + 12, 0);
+        } else {
+          return LocalTime.of(hour == 12 ? 0 : hour, 0);
+        }
+      } else {
+        throw new IllegalArgumentException("Hour must be between 1 and 12");
+      }
+    } else {
+      return LocalTime.parse(normalizedInput, DateTimeFormatter.ofPattern("h:mma"));
+    }
+  }
+
+  private static boolean is24HourFormat(String input) {
+    String[] parts = input.split(":");
+    if (parts.length >= 1) {
+      try {
+        int hour = Integer.parseInt(parts[0]);
+        return hour >= 13 || hour == 0;
+      } catch (NumberFormatException e) {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  private static LocalTime parse24HourFormat(String input) {
+    String[] parts = input.split(":");
+    if (parts.length == 2) {
+      int hour = Integer.parseInt(parts[0]);
+      int minute = Integer.parseInt(parts[1]);
+
+      if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+        return LocalTime.of(hour, minute);
+      }
+    }
+    throw new IllegalArgumentException("Invalid 24-hour format");
+  }
+
+  private static LocalTime parseWithSmartDetection(String input, LocalTime now) {
+    int hour = Integer.parseInt(input);
+
+    if (hour < 1 || hour > 12) {
+      throw new IllegalArgumentException("Hour must be between 1 and 12 for ambiguous format");
+    }
+
+    return smartAmPmDetection(hour, 0, now);
+  }
+
+  private static LocalTime smartAmPmDetection(int hour, int minute, LocalTime now) {
+    LocalTime amTime = LocalTime.of(hour == 12 ? 0 : hour, minute);
+    LocalTime pmTime = LocalTime.of(hour == 12 ? 12 : hour + 12, minute);
+
+    int currentHour = now.getHour();
+
+    if (currentHour >= 22 || currentHour <= 5) {
+      return amTime.isAfter(now) ? amTime : pmTime;
+    }
+
+    if (currentHour <= 11) {
+      return amTime.isAfter(now) ? amTime : pmTime;
+    }
+
+    return pmTime.isAfter(now) ? pmTime : amTime;
+  }
+
+  private static void cancelExistingScheduledUser(ReadyCheck readyCheck, String userId) {
+    ScheduledUser existingScheduled = readyCheck.getScheduledUsers().remove(userId);
+    if (existingScheduled != null) {
+      existingScheduled.cancel();
+    }
+
+    ScheduledFuture<?> existingUntil = readyCheck.getScheduledUntilFutures().remove(userId);
+    if (existingUntil != null && !existingUntil.isDone()) {
+      existingUntil.cancel(false);
+    }
+  }
+
+  private static ReadyCheck getReadyCheckOrThrow(String readyCheckId) {
+    ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
+    if (readyCheck == null) {
+      throw new IllegalArgumentException("Ready check not found");
+    }
+    return readyCheck;
+  }
+
+  private static void scheduleUserReady(
+      ReadyCheck readyCheck, String userId, Instant targetTime, JDA jda) {
+    readyCheck.getReadyUsers().remove(userId);
+    readyCheck.getPassedUsers().remove(userId);
+
+    Duration delay = Duration.between(Instant.now(), targetTime);
+    long delayMinutes = Math.max(1, delay.toMinutes());
+
+    ScheduledFuture<?> reminderFuture =
+        scheduler.schedule(
+            () -> sendReadyReminder(readyCheck.getId(), userId, jda),
+            delayMinutes,
+            TimeUnit.MINUTES);
+
+    ScheduledUser scheduledUser = new ScheduledUser(targetTime.toEpochMilli(), reminderFuture);
+    readyCheck.getScheduledUsers().put(userId, scheduledUser);
+  }
+
+  private static void handleStatusTransition(ReadyCheck readyCheck, TextChannel channel) {
+    boolean wasCompleted = readyCheck.getStatus() == ReadyCheckStatus.COMPLETED;
+    boolean nowCompleted = allNonPassedReady(readyCheck);
+
+    if (wasCompleted && !nowCompleted && readyCheck.getCompletionMessageId() != null) {
+      channel
+          .retrieveMessageById(readyCheck.getCompletionMessageId())
+          .queue(message -> message.delete().queue(null, error -> {}), error -> {});
+      readyCheck.setCompletionMessageId(null);
+      readyCheck.setStatus(ReadyCheckStatus.ACTIVE);
+    }
+  }
+
+  private static void updateMessage(
+      ReadyCheck readyCheck, TextChannel channel, String readyCheckId) {
+    channel
+        .retrieveMessageById(readyCheck.getMessageId())
+        .queue(
+            message -> {
+              EmbedBuilder embed =
+                  buildReadyCheckEmbed(readyCheck, globalJDA, readyCheck.getDescription());
+              List<Button> mainButtons = createMainButtons(readyCheckId);
+              List<Button> saveButton = createSaveButton(readyCheckId);
+
+              message
+                  .editMessageEmbeds(embed.build())
+                  .setComponents(ActionRow.of(mainButtons), ActionRow.of(saveButton))
+                  .queue();
+            },
+            error -> {});
+  }
+
+  private static void cleanupExpiredScheduledUsers(ReadyCheck readyCheck) {
+    long currentTime = System.currentTimeMillis();
+    Set<String> expiredUsers =
+        readyCheck.getScheduledUsers().entrySet().stream()
+            .filter(entry -> entry.getValue().readyTimestamp() <= currentTime)
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toSet());
+
+    expiredUsers.forEach(userId -> readyCheck.getScheduledUsers().remove(userId));
+  }
+
+  private static TextChannel getChannelFromGuild(Guild guild, String channelId) {
+    return guild != null ? guild.getTextChannelById(channelId) : null;
+  }
+
+  private static Set<String> getAllUsers(ReadyCheck readyCheck) {
+    Set<String> allUsers = new HashSet<>(readyCheck.getTargetUsers());
+    allUsers.add(readyCheck.getInitiatorId());
+    return allUsers;
+  }
+
+  private static List<String> getReadyUserNames(
+      ReadyCheck readyCheck, Set<String> allUsers, Guild guild) {
+    return allUsers.stream()
+        .filter(userId -> readyCheck.getReadyUsers().contains(userId))
+        .filter(userId -> !readyCheck.getPassedUsers().contains(userId))
+        .map(
+            userId -> {
+              Member member = guild.getMemberById(userId);
+              return member != null ? member.getEffectiveName() : null;
+            })
+        .filter(Objects::nonNull)
+        .collect(Collectors.toList());
+  }
+
+  private static String createReadyUserMentions(
+      ReadyCheck readyCheck, Set<String> allUsers, Guild guild, String readyCheckId) {
+    if (!getMentionPreference(readyCheckId)) {
+      return "";
+    }
+
+    return allUsers.stream()
+        .filter(userId -> readyCheck.getReadyUsers().contains(userId))
+        .filter(userId -> !readyCheck.getPassedUsers().contains(userId))
+        .map(
+            userId -> {
+              Member member = guild.getMemberById(userId);
+              return member != null ? member.getAsMention() : null;
+            })
+        .filter(Objects::nonNull)
+        .collect(Collectors.joining(" "));
+  }
+
+  private static void replaceReadyCheckWithSummary(
+      String readyCheckId, JDA jda, List<String> readyUserNames, String mentions) {
+    ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
+    if (readyCheck == null || readyCheck.getMessageId() == null) return;
+
+    Guild guild = jda.getGuildById(readyCheck.getGuildId());
+    TextChannel channel = getChannelFromGuild(guild, readyCheck.getChannelId());
+    if (channel == null) return;
+
+    StringBuilder memberList = new StringBuilder();
+    readyUserNames.forEach(userName -> memberList.append("✅ ").append(userName).append("\n"));
+
+    EmbedBuilder summaryEmbed =
+        new EmbedBuilder()
+            .setTitle("✅ Ready Check Complete")
+            .setDescription(readyCheck.getDescription() + "\n\n" + memberList)
+            .setColor(Color.GREEN)
+            .setTimestamp(Instant.now());
+
+    channel
+        .retrieveMessageById(readyCheck.getMessageId())
+        .queue(
+            oldMessage -> {
+              oldMessage.delete().queue(null, error -> {});
+              channel
+                  .sendMessage(mentions)
+                  .setEmbeds(summaryEmbed.build())
+                  .queue(newMessage -> readyCheck.setMessageId(newMessage.getId()));
+            },
+            error ->
+                channel
+                    .sendMessage(mentions)
+                    .setEmbeds(summaryEmbed.build())
+                    .queue(newMessage -> readyCheck.setMessageId(newMessage.getId())));
+  }
+
+  private static boolean userCanEngageWithReadyCheck(ReadyCheck readyCheck, String userId) {
+    return readyCheck.getTargetUsers().contains(userId)
+        || readyCheck.getPassedUsers().contains(userId)
+        || readyCheck.getInitiatorId().equals(userId);
+  }
+
+  private static SavedReadyCheck createSavedCheck(ReadyCheck readyCheck, boolean mentionPeople) {
+    if (readyCheck.getRoleId() != null) {
+      return new SavedReadyCheck(readyCheck.getRoleId(), false, mentionPeople);
+    } else {
+      List<String> allUserIds = new ArrayList<>(readyCheck.getTargetUsers());
+      allUserIds.add(readyCheck.getInitiatorId());
+      return new SavedReadyCheck(allUserIds, true, mentionPeople);
+    }
+  }
+
+  private static String createSavedCheckKey(String guildId, SavedReadyCheck savedCheck) {
+    return guildId
+        + "_"
+        + (savedCheck.isUserBased() ? savedCheck.getUserIds().hashCode() : savedCheck.getRoleId());
+  }
+
+  private static void removeDuplicateConfigurations(String guildId, SavedReadyCheck newSavedCheck) {
+    savedReadyChecks
+        .entrySet()
+        .removeIf(
+            entry -> {
+              String key = entry.getKey();
+              SavedReadyCheck savedCheck = entry.getValue();
+
+              if (!key.startsWith(guildId + "_")) return false;
+
+              if (savedCheck.isUserBased() == newSavedCheck.isUserBased()) {
+                if (savedCheck.isUserBased()) {
+                  Set<String> existingUsers = new HashSet<>(savedCheck.getUserIds());
+                  Set<String> newUsers = new HashSet<>(newSavedCheck.getUserIds());
+                  return existingUsers.equals(newUsers);
+                } else {
+                  return Objects.equals(savedCheck.getRoleId(), newSavedCheck.getRoleId());
+                }
+              }
+              return false;
+            });
+  }
+
+  private static boolean matchesSavedCheck(
+      ReadyCheck check, SavedReadyCheck savedCheck, String initiatorId) {
+    if (savedCheck.isUserBased()) {
+      Set<String> checkUserIds = new HashSet<>(check.getTargetUsers());
+      checkUserIds.add(initiatorId);
+      return checkUserIds.equals(new HashSet<>(savedCheck.getUserIds()));
+    } else {
+      return savedCheck.getRoleId().equals(check.getRoleId());
+    }
+  }
+
   private static String createReadyCheck(
       String guildId,
       String channelId,
@@ -862,7 +875,6 @@ public class ReadyCheckManager {
         new ReadyCheck(readyCheckId, guildId, channelId, initiatorId, roleId, targetUserIds);
     readyCheck.setDescription(description);
 
-    // Mark initiator as ready
     readyCheck.getReadyUsers().add(initiatorId);
     readyCheck.getTargetUsers().add(initiatorId);
 
@@ -895,15 +907,12 @@ public class ReadyCheckManager {
     Member member = guild.getMemberById(userId);
     if (member == null) return;
 
-    // Check if user should be auto-readied instead of reminded
     if (shouldAutoReadyUser(member)) {
       autoReadyUserFromReminder(readyCheck, userId, readyCheckId, jda);
       return;
     }
 
-    // User needs a reminder - remove from scheduled and update the embed with reminder
     readyCheck.getScheduledUsers().remove(userId);
-
     TextChannel channel = guild.getTextChannelById(readyCheck.getChannelId());
     if (channel == null) return;
 
@@ -956,50 +965,19 @@ public class ReadyCheckManager {
     if (readyCheck == null) return;
 
     Guild guild = jda.getGuildById(readyCheck.getGuildId());
-    if (guild == null) return;
-
-    TextChannel channel = guild.getTextChannelById(readyCheck.getChannelId());
+    TextChannel channel = getChannelFromGuild(guild, readyCheck.getChannelId());
     if (channel == null) return;
 
     EmbedBuilder embed = buildReadyCheckEmbed(readyCheck, jda, readyCheck.getDescription());
     List<Button> mainButtons = createMainButtons(readyCheckId);
     List<Button> saveButton = createSaveButton(readyCheckId);
-
     String reminderText = "⏰ " + member.getAsMention() + " it's time to be ready!";
 
     channel
         .sendMessage(reminderText)
         .setEmbeds(embed.build())
         .setComponents(ActionRow.of(mainButtons), ActionRow.of(saveButton))
-        .queue(
-            newMessage -> {
-              readyCheck.setMessageId(newMessage.getId());
-            });
-  }
-
-  private static boolean checkAndReadyUsersInVoice(ReadyCheck readyCheck) {
-    Guild guild = globalJDA.getGuildById(readyCheck.getGuildId());
-    if (guild == null) return false;
-
-    boolean anyChanges = false;
-    Set<String> allUsers = new HashSet<>(readyCheck.getTargetUsers());
-    allUsers.add(readyCheck.getInitiatorId());
-
-    for (String userId : allUsers) {
-      if (isUserAlreadyProcessed(readyCheck, userId)) {
-        continue;
-      }
-
-      Member member = guild.getMemberById(userId);
-      if (member == null) continue;
-
-      if (shouldAutoReadyUserInVoice(member)) {
-        autoReadyUserInVoice(readyCheck, userId);
-        anyChanges = true;
-      }
-    }
-
-    return anyChanges;
+        .queue(newMessage -> readyCheck.setMessageId(newMessage.getId()));
   }
 
   private static boolean isUserAlreadyProcessed(ReadyCheck readyCheck, String userId) {
@@ -1015,22 +993,9 @@ public class ReadyCheckManager {
 
   private static void autoReadyUserInVoice(ReadyCheck readyCheck, String userId) {
     readyCheck.getReadyUsers().add(userId);
-
     cancelExistingScheduledUser(readyCheck, userId);
-
     readyCheck.getUserTimers().remove(userId);
     readyCheck.getUserUntilTimes().remove(userId);
-  }
-
-  private static String buildMessageLink(ReadyCheck readyCheck) {
-    if (readyCheck.getMessageId() == null) return "";
-    return String.format(
-        "https://discord.com/channels/%s/%s/%s",
-        readyCheck.getGuildId(), readyCheck.getChannelId(), readyCheck.getMessageId());
-  }
-
-  private static void scheduleMessageDeletion(Message message, int minutes) {
-    scheduler.schedule(() -> message.delete().queue(null, error -> {}), minutes, TimeUnit.MINUTES);
   }
 
   private static Set<String> createUserSet(List<String> targetUserIds, String initiatorId) {
@@ -1042,7 +1007,7 @@ public class ReadyCheckManager {
   private static String findExistingReadyCheckInternal(String guildId, Set<String> targetUsers) {
     return activeReadyChecks.values().stream()
         .filter(check -> check.getGuildId().equals(guildId))
-        .filter(check -> isReadyCheckOngoing(check.getId())) // Only return non-completed checks
+        .filter(check -> isReadyCheckOngoing(check.getId()))
         .filter(
             check -> {
               Set<String> checkUsers = new HashSet<>(check.getTargetUsers());
@@ -1054,7 +1019,6 @@ public class ReadyCheckManager {
         .orElse(null);
   }
 
-  // UI Building Methods
   private static EmbedBuilder buildReadyCheckEmbed(
       ReadyCheck readyCheck, JDA jda, String description) {
     String status;
@@ -1078,56 +1042,117 @@ public class ReadyCheckManager {
   }
 
   private static String buildMemberList(ReadyCheck readyCheck, JDA jda) {
-    List<String> memberStatuses = new ArrayList<>();
-
-    Set<String> allUsers = new HashSet<>(readyCheck.getTargetUsers());
-    allUsers.add(readyCheck.getInitiatorId());
-
-    for (String userId : allUsers) {
-      memberStatuses.add(buildMemberStatus(readyCheck, userId, jda));
-    }
-
-    return String.join("\n", memberStatuses);
+    Set<String> allUsers = getAllUsers(readyCheck);
+    return allUsers.stream()
+        .map(userId -> buildMemberStatus(readyCheck, userId, jda))
+        .collect(Collectors.joining("\n"));
   }
 
-  private static String buildMemberStatus(
-      ReadyCheck readyCheck, String userId, JDA jda) { // todo:look at this
+  private static String buildMemberStatus(ReadyCheck readyCheck, String userId, JDA jda) {
+    String displayName = getDisplayName(readyCheck, userId, jda);
+
+    if (isUserPassed(readyCheck, userId)) {
+      return buildPassedStatus(displayName);
+    }
+
+    if (isUserReady(readyCheck, userId)) {
+      return buildReadyStatus(readyCheck, userId, displayName);
+    }
+
+    if (isUserScheduled(readyCheck, userId)) {
+      return buildScheduledStatus(readyCheck, userId, displayName);
+    }
+
+    return buildNotReadyStatus(displayName);
+  }
+
+  private static String getDisplayName(ReadyCheck readyCheck, String userId, JDA jda) {
     Guild guild = jda.getGuildById(readyCheck.getGuildId());
     Member member = guild != null ? guild.getMemberById(userId) : null;
-    String displayName = member != null ? member.getEffectiveName() : "Unknown User";
+    return member != null ? member.getEffectiveName() : "Unknown User";
+  }
 
-    if (readyCheck.getPassedUsers().contains(userId)) {
-      return "🚫 ~~" + displayName + "~~";
-    } else if (readyCheck.getReadyUsers().contains(userId)) {
-      if (readyCheck.getUserUntilTimes().containsKey(userId)) {
-        return "✅ " + displayName + " (until " + readyCheck.getUserUntilTimes().get(userId) + ")";
-      } else if (readyCheck.getUserTimers().containsKey(userId)) {
-        return "✅ "
-            + displayName
-            + " (auto-unready in "
-            + readyCheck.getUserTimers().get(userId)
-            + "min)";
-      } else {
-        return "✅ " + displayName;
-      }
-    } else if (readyCheck.getScheduledUsers().containsKey(userId)) {
-      ScheduledUser scheduledUser = readyCheck.getScheduledUsers().get(userId);
-      long readyTimeMs = scheduledUser.readyTimestamp();
-      long minutesLeft = (readyTimeMs - System.currentTimeMillis()) / 60000;
+  private static boolean isUserPassed(ReadyCheck readyCheck, String userId) {
+    return readyCheck.getPassedUsers().contains(userId);
+  }
 
-      if (minutesLeft <= 0) {
-        return "⏰ " + displayName + " (ready now!)";
-      } else {
-        String timeDisplay = formatScheduledTime(readyTimeMs, minutesLeft);
-        if (minutesLeft >= 60) {
-          return "⏰ " + displayName + " (ready " + timeDisplay + ")";
-        } else {
-          return "⏰ " + displayName + " (ready in " + timeDisplay + ")";
-        }
-      }
-    } else {
-      return "❌ " + displayName;
+  private static boolean isUserReady(ReadyCheck readyCheck, String userId) {
+    return readyCheck.getReadyUsers().contains(userId);
+  }
+
+  private static boolean isUserScheduled(ReadyCheck readyCheck, String userId) {
+    return readyCheck.getScheduledUsers().containsKey(userId);
+  }
+
+  private static String buildPassedStatus(String displayName) {
+    return "🚫 ~~" + displayName + "~~";
+  }
+
+  private static String buildReadyStatus(ReadyCheck readyCheck, String userId, String displayName) {
+    if (hasUntilTime(readyCheck, userId)) {
+      return buildReadyUntilStatus(readyCheck, userId, displayName);
     }
+
+    if (hasTimer(readyCheck, userId)) {
+      return buildReadyWithTimerStatus(readyCheck, userId, displayName);
+    }
+
+    return "✅ " + displayName;
+  }
+
+  private static boolean hasUntilTime(ReadyCheck readyCheck, String userId) {
+    return readyCheck.getUserUntilTimes().containsKey(userId);
+  }
+
+  private static boolean hasTimer(ReadyCheck readyCheck, String userId) {
+    return readyCheck.getUserTimers().containsKey(userId);
+  }
+
+  private static String buildReadyUntilStatus(
+      ReadyCheck readyCheck, String userId, String displayName) {
+    String untilTime = readyCheck.getUserUntilTimes().get(userId);
+    return "✅ " + displayName + " (until " + untilTime + ")";
+  }
+
+  private static String buildReadyWithTimerStatus(
+      ReadyCheck readyCheck, String userId, String displayName) {
+    Integer timerMinutes = readyCheck.getUserTimers().get(userId);
+    return "✅ " + displayName + " (auto-unready in " + timerMinutes + "min)";
+  }
+
+  private static String buildScheduledStatus(
+      ReadyCheck readyCheck, String userId, String displayName) {
+    ScheduledUser scheduledUser = readyCheck.getScheduledUsers().get(userId);
+    long readyTimeMs = scheduledUser.readyTimestamp();
+    long minutesLeft = calculateMinutesLeft(readyTimeMs);
+
+    if (minutesLeft <= 0) {
+      return "⏰ " + displayName + " (ready now!)";
+    }
+
+    String timeDisplay = formatScheduledTime(readyTimeMs, minutesLeft);
+    String timePrefix = minutesLeft >= 60 ? "ready " : "ready in ";
+    return "⏰ " + displayName + " (" + timePrefix + timeDisplay + ")";
+  }
+
+  private static long calculateMinutesLeft(long readyTimeMs) {
+    long currentTimeMs = System.currentTimeMillis();
+    return Math.max(0, (readyTimeMs - currentTimeMs) / 60000);
+  }
+
+  private static String formatScheduledTime(long timestampMs, long minutesLeft) {
+    if (minutesLeft >= 60) {
+      long discordTimestamp = timestampMs / 1000;
+      return "<t:" + discordTimestamp + ":t>";
+    } else if (minutesLeft >= 1) {
+      return minutesLeft + "min";
+    } else {
+      return "ready now!";
+    }
+  }
+
+  private static String buildNotReadyStatus(String displayName) {
+    return "❌ " + displayName;
   }
 
   private static List<Button> createMainButtons(String readyCheckId) {
@@ -1147,17 +1172,15 @@ public class ReadyCheckManager {
       return "";
     }
 
-    Set<String> allUsers = new HashSet<>(readyCheck.getTargetUsers());
-    allUsers.add(readyCheck.getInitiatorId());
-
+    Set<String> allUsers = getAllUsers(readyCheck);
     Guild guild = jda.getGuildById(readyCheck.getGuildId());
     if (guild == null) return "";
 
     return allUsers.stream()
-        .filter(userId -> !readyCheck.getReadyUsers().contains(userId)) // Not ready
-        .filter(userId -> !readyCheck.getPassedUsers().contains(userId)) // Not passed
-        .filter(userId -> !readyCheck.getScheduledUsers().containsKey(userId)) // Not scheduled
-        .filter(userId -> !readyCheck.getUserUntilTimes().containsKey(userId)) // Not ready until
+        .filter(userId -> !readyCheck.getReadyUsers().contains(userId))
+        .filter(userId -> !readyCheck.getPassedUsers().contains(userId))
+        .filter(userId -> !readyCheck.getScheduledUsers().containsKey(userId))
+        .filter(userId -> !readyCheck.getUserUntilTimes().containsKey(userId))
         .map(
             userId -> {
               Member member = guild.getMemberById(userId);
@@ -1204,9 +1227,7 @@ public class ReadyCheckManager {
   }
 
   private static int getReadyCount(ReadyCheck readyCheck) {
-    Set<String> allUsers = new HashSet<>(readyCheck.getTargetUsers());
-    allUsers.add(readyCheck.getInitiatorId());
-
+    Set<String> allUsers = getAllUsers(readyCheck);
     return (int)
         allUsers.stream()
             .filter(userId -> !readyCheck.getPassedUsers().contains(userId))
@@ -1215,17 +1236,13 @@ public class ReadyCheckManager {
   }
 
   private static int getNonPassedCount(ReadyCheck readyCheck) {
-    Set<String> allUsers = new HashSet<>(readyCheck.getTargetUsers());
-    allUsers.add(readyCheck.getInitiatorId());
-
+    Set<String> allUsers = getAllUsers(readyCheck);
     return (int)
         allUsers.stream().filter(userId -> !readyCheck.getPassedUsers().contains(userId)).count();
   }
 
   private static boolean allNonPassedReady(ReadyCheck readyCheck) {
-    Set<String> allUsers = new HashSet<>(readyCheck.getTargetUsers());
-    allUsers.add(readyCheck.getInitiatorId());
-
+    Set<String> allUsers = getAllUsers(readyCheck);
     return allUsers.stream()
         .filter(userId -> !readyCheck.getPassedUsers().contains(userId))
         .allMatch(userId -> readyCheck.getReadyUsers().contains(userId));
@@ -1234,8 +1251,9 @@ public class ReadyCheckManager {
   private static void saveSavedConfigurations() {
     try (FileWriter writer = new FileWriter(SAVE_FILE)) {
       gson.toJson(savedReadyChecks, writer);
+      logger.debug("Saved {} ready check configurations to file", savedReadyChecks.size());
     } catch (IOException e) {
-      System.err.println("Failed to save configurations: " + e.getMessage());
+      logger.error("Failed to save configurations to {}: {}", SAVE_FILE, e.getMessage(), e);
     }
   }
 
@@ -1246,12 +1264,12 @@ public class ReadyCheckManager {
     if (parentDir != null && !parentDir.exists()) {
       boolean created = parentDir.mkdirs();
       if (created) {
-        System.out.println("Created config directory: " + parentDir.getAbsolutePath());
+        logger.info("Created config directory: {}", parentDir.getAbsolutePath());
       }
     }
 
     if (!file.exists()) {
-      System.out.println("No existing configuration file found at: " + file.getAbsolutePath());
+      logger.info("No existing configuration file found at: {}", file.getAbsolutePath());
       return;
     }
 
@@ -1260,10 +1278,14 @@ public class ReadyCheckManager {
       Map<String, SavedReadyCheck> loaded = gson.fromJson(reader, type);
       if (loaded != null) {
         savedReadyChecks.putAll(loaded);
-        System.out.println("Loaded " + loaded.size() + " saved ready check configurations");
+        logger.info(
+            "Loaded {} saved ready check configurations from {}",
+            loaded.size(),
+            file.getAbsolutePath());
       }
     } catch (IOException e) {
-      System.err.println("Failed to load configurations: " + e.getMessage());
+      logger.error(
+          "Failed to load configurations from {}: {}", file.getAbsolutePath(), e.getMessage(), e);
     }
   }
 
@@ -1272,12 +1294,10 @@ public class ReadyCheckManager {
     if (dockerPath.exists() && dockerPath.isDirectory()) {
       return "/app/data/saved_ready_checks.json";
     }
-
     return "saved_ready_checks.json";
   }
 
   public record ScheduledUser(long readyTimestamp, ScheduledFuture<?> reminderFuture) {
-
     public void cancel() {
       if (reminderFuture != null && !reminderFuture.isDone()) {
         reminderFuture.cancel(false);
@@ -1298,10 +1318,10 @@ public class ReadyCheckManager {
     private final Map<String, Integer> userTimers;
     private final Map<String, String> userUntilTimes;
     private final Set<String> passedUsers;
+    private final long createdTime;
     private String messageId;
     private String completionMessageId;
     private ReadyCheckStatus status;
-    private final long createdTime;
     private String description;
 
     public ReadyCheck(
@@ -1413,18 +1433,20 @@ public class ReadyCheckManager {
   }
 
   public static class SavedReadyCheck {
-    private String roleId;
-    private List<String> userIds;
+    private final String roleId;
+    private final List<String> userIds;
     private final boolean userBased;
     private final boolean mentionPeople;
 
     public SavedReadyCheck(String roleId, boolean userBased, boolean mentionPeople) {
       this.roleId = roleId;
+      this.userIds = null;
       this.userBased = userBased;
       this.mentionPeople = mentionPeople;
     }
 
     public SavedReadyCheck(List<String> userIds, boolean userBased, boolean mentionPeople) {
+      this.roleId = null;
       this.userIds = userIds;
       this.userBased = userBased;
       this.mentionPeople = mentionPeople;

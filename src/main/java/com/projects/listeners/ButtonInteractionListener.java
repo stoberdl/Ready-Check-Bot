@@ -99,7 +99,7 @@ public class ButtonInteractionListener extends ListenerAdapter {
 
   private TextInput createTimeInput(String label) {
     return TextInput.create("time", label, TextInputStyle.SHORT)
-        .setPlaceholder("Examples: 5, 5:30, 3:45pm, 17:30")
+        .setPlaceholder("Examples: 5, 530, 5:30, 5:30pm, 17:30")
         .setMinLength(1)
         .setMaxLength(20)
         .build();
