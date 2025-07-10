@@ -46,7 +46,8 @@ public class ReadyCheckBot {
 
       registerSlashCommands();
     } catch (InterruptedException e) {
-      throw new RuntimeException("Bot startup interrupted", e);
+      logger.error("Bot startup was interrupted: ", e);
+      Thread.currentThread().interrupt();
     } catch (Exception e) {
       logger.error("Error starting the bot: ", e);
     }
