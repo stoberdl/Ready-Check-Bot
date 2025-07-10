@@ -10,28 +10,32 @@ import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class MessageListener extends ListenerAdapter {
+  private static final Logger logger = LoggerFactory.getLogger(MessageListener.class);
 
-  // Pattern to match "r", "R", "r in X", "R in X", "r at X", "R at X"
-  private static final Pattern R_PATTERN = Pattern.compile("^[rR](?:\\s+(in|at)\\s+(.+))?$");
+  private static final Pattern R_PATTERN =
+      Pattern.compile("^[rR](?:\\s+(in|at)\\s+([\\w:.,\\s]{1,50}))?$");
+  private static final int MAX_MESSAGE_LENGTH = 100;
 
   @Override
   public void onMessageReceived(MessageReceivedEvent event) {
-    if (event.getAuthor().isBot()) {
-      return;
-    }
-    if (!event.isFromGuild()) {
+    if (event.getAuthor().isBot() || !event.isFromGuild()) {
       return;
     }
 
     String messageContent = event.getMessage().getContentRaw().trim();
+
+    if (messageContent.length() > MAX_MESSAGE_LENGTH) {
+      return;
+    }
+
     Matcher matcher = R_PATTERN.matcher(messageContent);
-
     if (matcher.matches()) {
-      String timeType = matcher.group(1); // "in" or "at"
-      String timeValue = matcher.group(2); // the time value
-
+      String timeType = matcher.group(1);
+      String timeValue = matcher.group(2);
       handleRMessage(event, timeType, timeValue);
     }
   }
@@ -39,9 +43,12 @@ public class MessageListener extends ListenerAdapter {
   private void handleRMessage(MessageReceivedEvent event, String timeType, String timeValue) {
     String guildId = event.getGuild().getId();
     Member initiator = event.getMember();
-    String userId = initiator.getId();
+    if (initiator == null) {
+      logger.warn("Initiator member is null for guild: {}", guildId);
+      return;
+    }
 
-    // First, check if there's an active ready check within the past 2 hours that includes this user
+    String userId = initiator.getId();
     String existingCheckId = ReadyCheckManager.findActiveReadyCheckForUser(guildId, userId);
 
     if (existingCheckId != null) {
@@ -49,16 +56,14 @@ public class MessageListener extends ListenerAdapter {
       return;
     }
 
-    // No active ready check found, create a new one using the last saved config
     List<ReadyCheckManager.SavedReadyCheck> savedChecks =
         ReadyCheckManager.getSavedReadyChecks(guildId);
 
     if (savedChecks.isEmpty()) {
-      return; // Silent fail - no saved configs
+      return;
     }
 
     ReadyCheckManager.SavedReadyCheck lastSavedCheck = savedChecks.getLast();
-
     startReadyCheckFromSaved(event, lastSavedCheck, initiator, timeType, timeValue);
   }
 
@@ -69,30 +74,25 @@ public class MessageListener extends ListenerAdapter {
       String timeValue,
       MessageReceivedEvent event) {
     try {
+      ReadyCheckManager.unmarkUserPassed(readyCheckId, userId);
+
       if (timeType == null) {
-        // Just "r" or "R" - mark as ready now and remove from passed users
-        ReadyCheckManager.unmarkUserPassed(readyCheckId, userId);
         ReadyCheckManager.markUserReady(readyCheckId, userId);
       } else if ("in".equals(timeType) && timeValue != null) {
-        // "r in X" - schedule to be ready in X minutes (NOT auto-unready timer)
-        ReadyCheckManager.unmarkUserPassed(readyCheckId, userId);
         ReadyCheckManager.scheduleReadyAt(readyCheckId, timeValue.trim(), userId, event.getJDA());
       } else if ("at".equals(timeType) && timeValue != null) {
-        // "r at X" - same as "Ready at" button functionality with smart AM/PM detection
-        ReadyCheckManager.unmarkUserPassed(readyCheckId, userId);
         ReadyCheckManager.scheduleReadyAtSmart(
             readyCheckId, timeValue.trim(), userId, event.getJDA());
       }
 
-      // Update the embed to reflect the change
       ReadyCheckManager.updateReadyCheckEmbed(readyCheckId, event.getJDA());
 
-      // Check if all ready and notify if so
       if (ReadyCheckManager.checkIfAllReady(readyCheckId)) {
         ReadyCheckManager.notifyAllReady(readyCheckId, event.getJDA());
       }
     } catch (Exception e) {
-      // Silent fail if can't parse time values
+      logger.debug(
+          "Failed to parse time input '{}' for user {}: {}", timeValue, userId, e.getMessage());
     }
   }
 
@@ -119,26 +119,19 @@ public class MessageListener extends ListenerAdapter {
         getValidMembersFromIds(event, savedCheck.getUserIds(), initiator.getId());
 
     if (targetMembers.isEmpty()) {
-      return; // Silent fail
+      return;
     }
 
     String readyCheckId =
         ReadyCheckManager.createUserReadyCheck(
             event.getGuild().getId(), event.getChannel().getId(), initiator.getId(), targetMembers);
 
-    // Always set mentions to false for message-based ready checks
     ReadyCheckManager.setMentionPreference(readyCheckId, false);
-
-    // Handle initiator's ready status based on the command
     handleInitiatorReadyStatus(readyCheckId, initiator.getId(), timeType, timeValue, event);
 
-    // Create the ready check response
-    createReadyCheckResponseForMessage(
-        event,
-        readyCheckId,
-        targetMembers,
-        initiator,
-        "**" + initiator.getEffectiveName() + "** started a ready check for specific users");
+    String description =
+        "**" + initiator.getEffectiveName() + "** started a ready check for specific users";
+    createReadyCheckResponseForMessage(event, readyCheckId, targetMembers, initiator, description);
   }
 
   private void handleRoleBasedSavedCheck(
@@ -149,7 +142,7 @@ public class MessageListener extends ListenerAdapter {
       String timeValue) {
     Role targetRole = event.getGuild().getRoleById(savedCheck.getRoleId());
     if (targetRole == null) {
-      return; // Silent fail
+      return;
     }
 
     List<Member> targetMembers =
@@ -158,7 +151,7 @@ public class MessageListener extends ListenerAdapter {
             .collect(Collectors.toList());
 
     if (targetMembers.isEmpty()) {
-      return; // Silent fail
+      return;
     }
 
     String readyCheckId =
@@ -169,22 +162,15 @@ public class MessageListener extends ListenerAdapter {
             targetRole.getId(),
             targetMembers);
 
-    // Always set mentions to false for message-based ready checks
     ReadyCheckManager.setMentionPreference(readyCheckId, false);
-
-    // Handle initiator's ready status based on the command
     handleInitiatorReadyStatus(readyCheckId, initiator.getId(), timeType, timeValue, event);
 
-    // Create the ready check response
-    createReadyCheckResponseForMessage(
-        event,
-        readyCheckId,
-        targetMembers,
-        initiator,
+    String description =
         "**"
             + initiator.getEffectiveName()
             + "** started a ready check for "
-            + targetRole.getAsMention());
+            + targetRole.getAsMention();
+    createReadyCheckResponseForMessage(event, readyCheckId, targetMembers, initiator, description);
   }
 
   private void handleInitiatorReadyStatus(
@@ -195,18 +181,16 @@ public class MessageListener extends ListenerAdapter {
       MessageReceivedEvent event) {
     try {
       if (timeType == null) {
-        // Just "r" or "R" - mark as ready now
         ReadyCheckManager.markUserReady(readyCheckId, userId);
       } else if ("in".equals(timeType) && timeValue != null) {
-        // "r in X" - schedule to be ready in X minutes (NOT auto-unready timer)
         ReadyCheckManager.scheduleReadyAt(readyCheckId, timeValue.trim(), userId, event.getJDA());
       } else if ("at".equals(timeType) && timeValue != null) {
-        // "r at X" - same as "Ready at" button functionality with smart AM/PM detection
         ReadyCheckManager.scheduleReadyAtSmart(
             readyCheckId, timeValue.trim(), userId, event.getJDA());
       }
     } catch (Exception e) {
-      // If can't parse, just mark as ready
+      logger.debug(
+          "Failed to parse time input, marking user as ready immediately: {}", e.getMessage());
       ReadyCheckManager.markUserReady(readyCheckId, userId);
     }
   }
@@ -217,7 +201,6 @@ public class MessageListener extends ListenerAdapter {
       List<Member> targetMembers,
       Member initiator,
       String description) {
-    // Send the ready check directly to the channel since we're dealing with a message event
     ReadyCheckManager.sendReadyCheckToChannel(
         event.getChannel().asTextChannel(),
         readyCheckId,

@@ -45,6 +45,8 @@ public class ReadyCheckBot {
       ReadyCheckManager.setJDA(jda);
 
       registerSlashCommands();
+    } catch (InterruptedException e) {
+      throw new RuntimeException("Bot startup interrupted", e);
     } catch (Exception e) {
       logger.error("Error starting the bot: ", e);
     }

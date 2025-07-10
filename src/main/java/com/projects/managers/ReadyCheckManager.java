@@ -27,7 +27,7 @@ public class ReadyCheckManager {
   private static final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(4);
   private static final String SAVE_FILE = getConfigFilePath();
   private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
-  private static final long TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+  private static final long TWO_HOURS_MS = TimeUnit.HOURS.toMillis(2);
   private static JDA globalJDA;
 
   static {
@@ -461,8 +461,6 @@ public class ReadyCheckManager {
       ScheduledUser scheduledUser = new ScheduledUser(targetTimeMs, reminderFuture);
       readyCheck.getScheduledUsers().put(userId, scheduledUser);
 
-      LocalTime readyTime = LocalTime.now().plusMinutes(delayMinutes);
-      formatTimeForDisplay(timeInput, readyTime);
     } catch (Exception e) {
       throw new IllegalArgumentException("Invalid time format: " + timeInput);
     }
@@ -1203,13 +1201,6 @@ public class ReadyCheckManager {
         .allMatch(userId -> readyCheck.getReadyUsers().contains(userId));
   }
 
-  private static void formatTimeForDisplay(String originalInput, LocalTime readyTime) {
-    if (!originalInput.matches("\\d+")) {
-      readyTime.format(DateTimeFormatter.ofPattern("h:mm a"));
-    }
-  }
-
-  // File I/O utilities
   private static void saveSavedConfigurations() {
     try (FileWriter writer = new FileWriter(SAVE_FILE)) {
       gson.toJson(savedReadyChecks, writer);
