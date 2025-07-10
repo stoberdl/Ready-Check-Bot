@@ -5,9 +5,6 @@
 [![Maven](https://img.shields.io/badge/Maven-3.9+-red.svg)](https://maven.apache.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-
-# Ready Check Bot
-
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=stoberdl_Ready-Check-Bot&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=stoberdl_Ready-Check-Bot)
 [![Maintainability Rating](https://sonarcloud.io/api/project_badges/measure?project=stoberdl_Ready-Check-Bot&metric=sqale_rating)](https://sonarcloud.io/summary/new_code?id=stoberdl_Ready-Check-Bot)
 [![Bugs](https://sonarcloud.io/api/project_badges/measure?project=stoberdl_Ready-Check-Bot&metric=bugs)](https://sonarcloud.io/summary/new_code?id=stoberdl_Ready-Check-Bot)
