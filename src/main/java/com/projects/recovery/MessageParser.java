@@ -6,7 +6,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import net.dv8tion.jda.api.entities.Guild;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,14 +20,11 @@ public class MessageParser {
 
   private static final Pattern READY_COUNT_PATTERN = Pattern.compile("(\\d+)/(\\d+) ready");
 
-  /**
-   * Parse embed description to extract ready check data
-   *
-   * @param description The embed description text
-   * @param guild The guild for context
-   * @return Parsed data or null if parsing failed
-   */
-  public static RecoveredReadyCheckData parseEmbedContent(String description, Guild guild) {
+  private MessageParser() {
+    // Private constructor to hide implicit public one
+  }
+
+  public static RecoveredReadyCheckData parseEmbedContent(String description) {
     if (description == null || description.trim().isEmpty()) {
       logger.debug("Empty or null embed description");
       return null;
@@ -100,10 +96,8 @@ public class MessageParser {
   }
 
   private static String cleanDisplayName(String displayName) {
-    displayName = displayName.replaceAll("\\*\\*", "").replaceAll("\\*", "");
-
-    displayName = displayName.replaceAll("~~", "");
-
+    displayName = displayName.replace("**", "").replace("*", "");
+    displayName = displayName.replace("~~", "");
     displayName = displayName.trim();
 
     if (displayName.contains(" (")) {
@@ -117,7 +111,6 @@ public class MessageParser {
   private static boolean validateParsedData(
       String initiatorName, List<UserState> userStates, String description) {
 
-    // Basic sanity checks
     if (initiatorName.length() > 100) {
       logger.debug("Initiator name too long: {}", initiatorName.length());
       return false;
@@ -136,7 +129,6 @@ public class MessageParser {
 
       if (Math.abs(expectedTotal - actualTotal) > 2) {
         logger.debug("User count mismatch: expected ~{}, found {}", expectedTotal, actualTotal);
-        // Don't fail validation, just log - embed might have formatting differences
       }
     }
 

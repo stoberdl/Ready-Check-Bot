@@ -17,6 +17,11 @@ import org.slf4j.LoggerFactory;
 public class ReadyCheckRecoveryManager {
   private static final Logger logger = LoggerFactory.getLogger(ReadyCheckRecoveryManager.class);
   private static final int RECOVERY_HOURS = 12;
+  private static final String TOGGLE_READY_PREFIX = "toggle_ready_";
+
+  private ReadyCheckRecoveryManager() {
+    // Private constructor to hide implicit public one
+  }
 
   public static void recoverReadyChecksFromMessages(JDA jda) {
     logger.info("Starting ready check recovery from messages (last {} hours)...", RECOVERY_HOURS);
@@ -55,42 +60,29 @@ public class ReadyCheckRecoveryManager {
         .queue(
             messages -> {
               for (Message message : messages) {
-                if (shouldRecoverMessage(message, cutoffTime)) {
-                  if (recoverReadyCheckFromMessage(message)) {
-                    // Don't increment here since this is async
-                  }
+                if (shouldRecoverMessage(message, cutoffTime) && hasReadyCheckButtons(message)) {
+                  recoverReadyCheckFromMessage(message);
                 }
               }
             });
 
-    return recovered; // Note: This will be 0 due to async nature, but that's OK for logging
+    return recovered;
   }
 
   private static boolean shouldRecoverMessage(Message message, long cutoffTime) {
-    // Must be from the bot
-    if (!message.getAuthor().equals(message.getJDA().getSelfUser())) {
+    if (!message.getAuthor().equals(message.getJDA().getSelfUser())
+        || message.getTimeCreated().toInstant().toEpochMilli() <= cutoffTime
+        || message.getEmbeds().isEmpty()) {
       return false;
     }
 
-    if (message.getTimeCreated().toInstant().toEpochMilli() <= cutoffTime) {
-      return false;
-    }
-
-    if (message.getEmbeds().isEmpty()) {
-      return false;
-    }
-
-    var embed = message.getEmbeds().get(0);
+    var embed = message.getEmbeds().getFirst();
     if (embed.getTitle() == null) {
       return false;
     }
 
     String title = embed.getTitle().toLowerCase();
-    if (!title.contains("ready")) {
-      return false;
-    }
-
-    return hasReadyCheckButtons(message);
+    return title.contains("ready");
   }
 
   private static boolean hasReadyCheckButtons(Message message) {
@@ -100,30 +92,29 @@ public class ReadyCheckRecoveryManager {
             component ->
                 component instanceof Button button
                     && button.getId() != null
-                    && button.getId().startsWith("toggle_ready_"));
+                    && button.getId().startsWith(TOGGLE_READY_PREFIX));
   }
 
-  private static boolean recoverReadyCheckFromMessage(Message message) {
+  private static void recoverReadyCheckFromMessage(Message message) {
     try {
-      var embed = message.getEmbeds().get(0);
+      var embed = message.getEmbeds().getFirst();
 
       String readyCheckId = extractReadyCheckId(message);
       if (readyCheckId == null) {
         logger.debug("No ready check ID found in message: {}", message.getId());
-        return false;
+        return;
       }
 
       if (ReadyCheckManager.hasActiveReadyCheck(readyCheckId)) {
         logger.debug("Ready check {} already exists, skipping recovery", readyCheckId);
-        return false;
+        return;
       }
 
-      RecoveredReadyCheckData data =
-          MessageParser.parseEmbedContent(embed.getDescription(), message.getGuild());
+      RecoveredReadyCheckData data = MessageParser.parseEmbedContent(embed.getDescription());
 
       if (data == null) {
         logger.debug("Could not parse embed content from message: {}", message.getId());
-        return false;
+        return;
       }
 
       ReadyCheckManager.ReadyCheck recoveredCheck =
@@ -136,7 +127,7 @@ public class ReadyCheckRecoveryManager {
 
       if (recoveredCheck == null) {
         logger.debug("Could not create recovered ready check from message: {}", message.getId());
-        return false;
+        return;
       }
 
       ReadyCheckManager.addRecoveredReadyCheck(readyCheckId, recoveredCheck);
@@ -149,12 +140,9 @@ public class ReadyCheckRecoveryManager {
           recoveredCheck.getTargetUsers().size(),
           message.getGuild().getName());
 
-      return true;
-
     } catch (Exception e) {
       logger.debug(
           "Failed to recover ready check from message {}: {}", message.getId(), e.getMessage());
-      return false;
     }
   }
 
@@ -163,8 +151,8 @@ public class ReadyCheckRecoveryManager {
         .flatMap(row -> row.getComponents().stream())
         .filter(component -> component instanceof Button)
         .map(component -> ((Button) component).getId())
-        .filter(id -> id != null && id.startsWith("toggle_ready_"))
-        .map(id -> id.replace("toggle_ready_", ""))
+        .filter(id -> id != null && id.startsWith(TOGGLE_READY_PREFIX))
+        .map(id -> id.replace(TOGGLE_READY_PREFIX, ""))
         .findFirst()
         .orElse(null);
   }
@@ -189,18 +177,19 @@ public class ReadyCheckRecoveryManager {
       return null;
     }
 
-    var recoveredCheck =
+    ReadyCheckManager.ReadyCheck recoveredCheck =
         ReadyCheckManager.createRecoveredReadyCheck(
             readyCheckId,
             guildId,
             channelId,
             initiatorId,
+            null, // roleId
             resolvedUsers.targetUsers(),
             resolvedUsers.readyUsers(),
             resolvedUsers.passedUsers(),
             messageId);
 
-    recoveredCheck.setDescription("🔄 **Recovered** " + data.initiatorName() + "'s ready check");
+    recoveredCheck.setDescription(data.initiatorName() + "'s ready check(🔄)");
 
     return recoveredCheck;
   }

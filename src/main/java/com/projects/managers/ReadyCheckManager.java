@@ -74,6 +74,7 @@ public class ReadyCheckManager {
       String guildId,
       String channelId,
       String initiatorId,
+      String roleId,
       Set<String> targetUsers,
       Set<String> readyUsers,
       Set<String> passedUsers,
@@ -81,12 +82,7 @@ public class ReadyCheckManager {
 
     ReadyCheck recoveredCheck =
         new ReadyCheck(
-            readyCheckId,
-            guildId,
-            channelId,
-            initiatorId,
-            null, // roleId - null for recovered checks
-            new ArrayList<>(targetUsers));
+            readyCheckId, guildId, channelId, initiatorId, roleId, new ArrayList<>(targetUsers));
 
     recoveredCheck.getTargetUsers().clear();
     recoveredCheck.getTargetUsers().addAll(targetUsers);
@@ -561,70 +557,94 @@ public class ReadyCheckManager {
 
     if (input.contains("pm") || input.contains("am")) {
       return parseExplicitAmPm(input);
-    } else if (input.contains(":") && is24HourFormat(input)) {
-      return parse24HourFormat(input);
-    } else if (input.contains(":")) {
-      return parseTimeWithColon(input, now);
-    } else if (input.matches("\\d{3,4}")) {
-      return parseCompactTime(input, now);
-    } else {
-      return parseWithSmartDetection(input, now);
     }
+
+    if (input.contains(":") && is24HourFormat(input)) {
+      return parse24HourFormat(input);
+    }
+
+    if (input.contains(":")) {
+      return parseTimeWithColon(input, now);
+    }
+
+    if (input.matches("\\d{3,4}")) {
+      return parseCompactTime(input, now);
+    }
+
+    return parseWithSmartDetection(input, now);
   }
 
   private static LocalTime parseTimeWithColon(String input, LocalTime now) {
+    return parseTimeComponents(input, now);
+  }
+
+  private static LocalTime parseTimeComponents(String input, LocalTime now) {
     String[] parts = input.split(":");
-    if (parts.length == 2) {
-      try {
-        int hour = Integer.parseInt(parts[0]);
-        int minute = Integer.parseInt(parts[1]);
-
-        if (minute < 0 || minute > 59) {
-          throw new IllegalArgumentException("Invalid minutes");
-        }
-
-        if (hour >= 1 && hour <= 12) {
-          return smartAmPmDetection(hour, minute, now);
-        } else {
-          throw new IllegalArgumentException("Hour must be between 1 and 12 for ambiguous format");
-        }
-      } catch (NumberFormatException e) {
-        throw new IllegalArgumentException("Invalid time format");
-      }
+    if (parts.length != 2) {
+      throw new IllegalArgumentException("Invalid time format");
     }
-    throw new IllegalArgumentException("Invalid time format");
+
+    try {
+      int hour = Integer.parseInt(parts[0]);
+      int minute = Integer.parseInt(parts[1]);
+
+      validateMinutes(minute);
+      validateHour(hour);
+
+      return smartAmPmDetection(hour, minute, now);
+    } catch (NumberFormatException e) {
+      throw new IllegalArgumentException("Invalid time format");
+    }
+  }
+
+  private static void validateMinutes(int minute) {
+    if (minute < 0 || minute > 59) {
+      throw new IllegalArgumentException("Invalid minutes");
+    }
+  }
+
+  private static void validateHour(int hour) {
+    if (hour < 1 || hour > 12) {
+      throw new IllegalArgumentException("Hour must be between 1 and 12 for ambiguous format");
+    }
   }
 
   private static LocalTime parseCompactTime(String input, LocalTime now) {
     try {
       if (input.length() == 3) {
-        int hour = Integer.parseInt(input.substring(0, 1));
-        int minute = Integer.parseInt(input.substring(1, 3));
-
-        if (minute < 0 || minute > 59) {
-          throw new IllegalArgumentException("Invalid minutes");
-        }
-
-        if (hour >= 1 && hour <= 9) {
-          return smartAmPmDetection(hour, minute, now);
-        }
+        return parseThreeDigitTime(input, now);
       } else if (input.length() == 4) {
-        int hour = Integer.parseInt(input.substring(0, 2));
-        int minute = Integer.parseInt(input.substring(2, 4));
-
-        if (minute < 0 || minute > 59) {
-          throw new IllegalArgumentException("Invalid minutes");
-        }
-
-        if (hour >= 1 && hour <= 12) {
-          return smartAmPmDetection(hour, minute, now);
-        }
+        return parseFourDigitTime(input, now);
       }
 
       throw new IllegalArgumentException("Invalid time format");
     } catch (NumberFormatException e) {
       throw new IllegalArgumentException("Invalid time format");
     }
+  }
+
+  private static LocalTime parseThreeDigitTime(String input, LocalTime now) {
+    int hour = Integer.parseInt(input.substring(0, 1));
+    int minute = Integer.parseInt(input.substring(1, 3));
+
+    validateMinutes(minute);
+
+    if (hour >= 1 && hour <= 9) {
+      return smartAmPmDetection(hour, minute, now);
+    }
+    throw new IllegalArgumentException("Invalid hour in time format");
+  }
+
+  private static LocalTime parseFourDigitTime(String input, LocalTime now) {
+    int hour = Integer.parseInt(input.substring(0, 2));
+    int minute = Integer.parseInt(input.substring(2, 4));
+
+    validateMinutes(minute);
+
+    if (hour >= 1 && hour <= 12) {
+      return smartAmPmDetection(hour, minute, now);
+    }
+    throw new IllegalArgumentException("Invalid hour in time format");
   }
 
   private static LocalTime parseExplicitAmPm(String input) {
@@ -973,7 +993,7 @@ public class ReadyCheckManager {
     TextChannel channel = guild.getTextChannelById(readyCheck.getChannelId());
     if (channel == null) return;
 
-    deleteOldMessageAndSendReminder(readyCheck, readyCheckId, userId, member, channel, jda);
+    deleteOldMessageAndSendReminder(readyCheck, readyCheckId, member, channel, jda);
   }
 
   private static boolean shouldAutoReadyUser(Member member) {
@@ -996,28 +1016,23 @@ public class ReadyCheckManager {
   }
 
   private static void deleteOldMessageAndSendReminder(
-      ReadyCheck readyCheck,
-      String readyCheckId,
-      String userId,
-      Member member,
-      TextChannel channel,
-      JDA jda) {
+      ReadyCheck readyCheck, String readyCheckId, Member member, TextChannel channel, JDA jda) {
     if (readyCheck.getMessageId() != null) {
       channel
           .retrieveMessageById(readyCheck.getMessageId())
           .queue(
               oldMessage -> {
                 oldMessage.delete().queue(null, error -> {});
-                sendUpdatedReadyCheckWithReminder(readyCheckId, userId, member, jda);
+                sendUpdatedReadyCheckWithReminder(readyCheckId, member, jda);
               },
-              error -> sendUpdatedReadyCheckWithReminder(readyCheckId, userId, member, jda));
+              error -> sendUpdatedReadyCheckWithReminder(readyCheckId, member, jda));
     } else {
-      sendUpdatedReadyCheckWithReminder(readyCheckId, userId, member, jda);
+      sendUpdatedReadyCheckWithReminder(readyCheckId, member, jda);
     }
   }
 
   private static void sendUpdatedReadyCheckWithReminder(
-      String readyCheckId, String userId, Member member, JDA jda) {
+      String readyCheckId, Member member, JDA jda) {
     ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
     if (readyCheck == null) return;
 
@@ -1347,9 +1362,10 @@ public class ReadyCheckManager {
   }
 
   private static String getConfigFilePath() {
-    File dockerPath = new File("/app/data");
+    String configDir = System.getProperty("bot.config.dir", "/app/data");
+    File dockerPath = new File(configDir);
     if (dockerPath.exists() && dockerPath.isDirectory()) {
-      return "/app/data/saved_ready_checks.json";
+      return configDir + "/saved_ready_checks.json";
     }
     return "saved_ready_checks.json";
   }
