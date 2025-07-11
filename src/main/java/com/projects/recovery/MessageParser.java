@@ -7,14 +7,15 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class MessageParser {
+public final class MessageParser {
   private static final Logger logger = LoggerFactory.getLogger(MessageParser.class);
 
+  // Fixed regex patterns to prevent polynomial backtracking
   private static final Pattern INITIATOR_PATTERN =
       Pattern.compile("\\*\\*([^*]{1,50})\\*\\* started a ready check");
 
   private static final Pattern USER_STATUS_PATTERN =
-      Pattern.compile("([❌✅⏰🚫]) ([^\\n\\r]{1,100})(?:\\s+\\([^)]{1,50}\\))?$", Pattern.MULTILINE);
+      Pattern.compile("([❌✅⏰🚫]) ([^\\n\\r]{1,100})(?:\\s+\\([^)]{1,50}\\))?", Pattern.MULTILINE);
 
   private static final Pattern READY_COUNT_PATTERN = Pattern.compile("(\\d+)/(\\d+) ready");
 
@@ -22,15 +23,15 @@ public class MessageParser {
     // Private constructor to hide implicit public one
   }
 
-  public static RecoveredReadyCheckData parseEmbedContent(String description) {
+  public static RecoveredReadyCheckData parseEmbedContent(final String description) {
     if (description == null || description.trim().isEmpty()) {
       logger.debug("Empty or null embed description");
       return null;
     }
 
     try {
-      String initiatorName = extractInitiatorName(description);
-      List<UserState> userStates = extractUserStates(description);
+      final String initiatorName = extractInitiatorName(description);
+      final List<UserState> userStates = extractUserStates(description);
 
       if (initiatorName == null || userStates.isEmpty()) {
         logger.debug(
@@ -47,32 +48,32 @@ public class MessageParser {
       logger.debug("Parsed ready check: initiator={}, users={}", initiatorName, userStates.size());
       return new RecoveredReadyCheckData(initiatorName, userStates);
 
-    } catch (Exception e) {
+    } catch (final Exception e) {
       logger.debug("Exception parsing embed content: {}", e.getMessage());
       return null;
     }
   }
 
-  private static String extractInitiatorName(String description) {
+  private static String extractInitiatorName(final String description) {
     Matcher matcher = INITIATOR_PATTERN.matcher(description);
     if (matcher.find()) {
-      String name = matcher.group(1).trim();
+      final String name = matcher.group(1).trim();
       logger.debug("Found initiator: {}", name);
       return name;
     }
 
-    Pattern recoveryPattern = Pattern.compile("([^']{1,50})'s ready check\\(🔄️?\\)");
+    final Pattern recoveryPattern = Pattern.compile("([^']{1,50})'s ready check\\(🔄️?\\)");
     matcher = recoveryPattern.matcher(description);
     if (matcher.find()) {
-      String name = matcher.group(1).trim();
+      final String name = matcher.group(1).trim();
       logger.debug("Found recovery initiator: {}", name);
       return name;
     }
 
-    Pattern simpleRecoveryPattern = Pattern.compile("([^']{1,50})'s ready check");
+    final Pattern simpleRecoveryPattern = Pattern.compile("([^']{1,50})'s ready check");
     matcher = simpleRecoveryPattern.matcher(description);
     if (matcher.find()) {
-      String name = matcher.group(1).trim();
+      final String name = matcher.group(1).trim();
       logger.debug("Found simple recovery initiator: {}", name);
       return name;
     }
@@ -81,12 +82,12 @@ public class MessageParser {
     return null;
   }
 
-  private static List<UserState> extractUserStates(String description) {
-    List<UserState> userStates = new ArrayList<>();
-    Matcher matcher = USER_STATUS_PATTERN.matcher(description);
+  private static List<UserState> extractUserStates(final String description) {
+    final List<UserState> userStates = new ArrayList<>();
+    final Matcher matcher = USER_STATUS_PATTERN.matcher(description);
 
     while (matcher.find()) {
-      String status = matcher.group(1);
+      final String status = matcher.group(1);
       String displayName = matcher.group(2).trim();
 
       displayName = cleanDisplayName(displayName);
@@ -107,7 +108,7 @@ public class MessageParser {
     displayName = displayName.trim();
 
     if (displayName.contains(" (")) {
-      int parenIndex = displayName.indexOf(" (");
+      final int parenIndex = displayName.indexOf(" (");
       displayName = displayName.substring(0, parenIndex).trim();
     }
 
@@ -115,7 +116,7 @@ public class MessageParser {
   }
 
   private static boolean validateParsedData(
-      String initiatorName, List<UserState> userStates, String description) {
+      final String initiatorName, final List<UserState> userStates, final String description) {
 
     if (initiatorName.length() > 100) {
       logger.debug("Initiator name too long: {}", initiatorName.length());
@@ -127,10 +128,10 @@ public class MessageParser {
       return false;
     }
 
-    Matcher readyCountMatcher = READY_COUNT_PATTERN.matcher(description);
+    final Matcher readyCountMatcher = READY_COUNT_PATTERN.matcher(description);
     if (readyCountMatcher.find()) {
-      int expectedTotal = Integer.parseInt(readyCountMatcher.group(2));
-      int actualTotal =
+      final int expectedTotal = Integer.parseInt(readyCountMatcher.group(2));
+      final int actualTotal =
           (int) userStates.stream().filter(state -> !state.status().equals("🚫")).count();
 
       if (Math.abs(expectedTotal - actualTotal) > 2) {
@@ -138,7 +139,7 @@ public class MessageParser {
       }
     }
 
-    boolean initiatorFound =
+    final boolean initiatorFound =
         userStates.stream().anyMatch(state -> state.displayName().equalsIgnoreCase(initiatorName));
 
     if (!initiatorFound) {

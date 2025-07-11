@@ -1,24 +1,9 @@
 package com.projects.recovery;
 
-/**
- * @param status ❌, ✅, ⏰, 🚫
- */
 public record UserState(String displayName, String status) {
 
   public boolean isReady() {
     return "✅".equals(status);
-  }
-
-  public boolean isPassed() {
-    return "🚫".equals(status);
-  }
-
-  public boolean isScheduled() {
-    return "⏰".equals(status);
-  }
-
-  public boolean isNotReady() {
-    return "❌".equals(status);
   }
 
   @Override

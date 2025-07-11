@@ -9,39 +9,38 @@ import net.dv8tion.jda.api.events.interaction.ModalInteractionEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.InteractionHook;
 
-public class ModalInteractionListener extends ListenerAdapter {
+public final class ModalInteractionListener extends ListenerAdapter {
   private static final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
+  private static final String READY_AT_PREFIX = "ready_at_";
+  private static final String READY_UNTIL_PREFIX = "ready_until_";
 
   @Override
-  public void onModalInteraction(ModalInteractionEvent event) {
-    String modalId = event.getModalId();
+  public void onModalInteraction(final ModalInteractionEvent event) {
+    final String modalId = event.getModalId();
 
-    if (modalId.startsWith("ready_at_")) {
+    if (modalId.startsWith(READY_AT_PREFIX)) {
       handleReadyAtModal(event, modalId);
-    } else if (modalId.startsWith("ready_until_")) {
+    } else if (modalId.startsWith(READY_UNTIL_PREFIX)) {
       handleReadyUntilModal(event, modalId);
     }
   }
 
-  private void handleReadyAtModal(ModalInteractionEvent event, String modalId) {
-    String[] parts = extractModalParts(modalId, "ready_at_");
+  private void handleReadyAtModal(final ModalInteractionEvent event, final String modalId) {
+    final String[] parts = extractModalParts(modalId, READY_AT_PREFIX);
     if (parts == null) {
       event
           .reply("❌ Invalid modal format.")
           .setEphemeral(true)
-          .queue(
-              hook -> {
-                scheduleEphemeralDeletion(hook, 20);
-              });
+          .queue(hook -> scheduleEphemeralDeletion(hook, 20));
       return;
     }
 
-    String readyCheckId = parts[0];
-    String userId = parts[1];
-    String timeInput = Objects.requireNonNull(event.getValue("time")).getAsString();
+    final String readyCheckId = parts[0];
+    final String userId = parts[1];
+    final String timeInput = Objects.requireNonNull(event.getValue("time")).getAsString();
 
     try {
-      String formattedTime =
+      final String formattedTime =
           ReadyCheckManager.scheduleReadyAtSmart(readyCheckId, timeInput, userId, event.getJDA());
       ReadyCheckManager.updateReadyCheckEmbed(readyCheckId, event.getJDA());
       event
@@ -50,36 +49,30 @@ public class ModalInteractionListener extends ListenerAdapter {
                   + formattedTime
                   + "**! I'll send you a reminder in the channel when it's time.")
           .setEphemeral(true)
-          .queue(
-              hook -> {
-                scheduleEphemeralDeletion(hook, 20);
-              });
-    } catch (Exception e) {
+          .queue(hook -> scheduleEphemeralDeletion(hook, 20));
+    } catch (final Exception e) {
       replyWithTimeFormatError(event);
     }
   }
 
-  private void handleReadyUntilModal(ModalInteractionEvent event, String modalId) {
-    String[] parts = extractModalParts(modalId, "ready_until_");
+  private void handleReadyUntilModal(final ModalInteractionEvent event, final String modalId) {
+    final String[] parts = extractModalParts(modalId, READY_UNTIL_PREFIX);
     if (parts == null) {
       event
           .reply("❌ Invalid modal format.")
           .setEphemeral(true)
-          .queue(
-              hook -> {
-                scheduleEphemeralDeletion(hook, 20);
-              });
+          .queue(hook -> scheduleEphemeralDeletion(hook, 20));
       return;
     }
 
-    String readyCheckId = parts[0];
-    String userId = parts[1];
-    String timeInput = Objects.requireNonNull(event.getValue("time")).getAsString();
+    final String readyCheckId = parts[0];
+    final String userId = parts[1];
+    final String timeInput = Objects.requireNonNull(event.getValue("time")).getAsString();
 
     try {
-      String formattedTime =
+      final String formattedTime =
           ReadyCheckManager.scheduleReadyUntil(readyCheckId, timeInput, userId, event.getJDA());
-      boolean allReady = ReadyCheckManager.markUserReady(readyCheckId, userId);
+      final boolean allReady = ReadyCheckManager.markUserReady(readyCheckId, userId);
       ReadyCheckManager.updateReadyCheckEmbed(readyCheckId, event.getJDA());
 
       String response =
@@ -91,42 +84,28 @@ public class ModalInteractionListener extends ListenerAdapter {
         response = "✅ You're ready until **" + formattedTime + "**!";
       }
 
-      event
-          .reply(response)
-          .setEphemeral(true)
-          .queue(
-              hook -> {
-                scheduleEphemeralDeletion(hook, 15);
-              });
-    } catch (Exception e) {
+      event.reply(response).setEphemeral(true).queue(hook -> scheduleEphemeralDeletion(hook, 15));
+    } catch (final Exception e) {
       replyWithTimeFormatError(event);
     }
   }
 
-  private String[] extractModalParts(String modalId, String prefix) {
-    String[] parts = modalId.replace(prefix, "").split("_");
+  private String[] extractModalParts(final String modalId, final String prefix) {
+    final String[] parts = modalId.replace(prefix, "").split("_");
     return parts.length < 2 ? null : parts;
   }
 
-  private void replyWithTimeFormatError(ModalInteractionEvent event) {
+  private void replyWithTimeFormatError(final ModalInteractionEvent event) {
     event
         .reply(
             "❌ Invalid time format. Please use formats like: **5**, **530**, **5:30 PM**,"
                 + " **3:45pm**, **17:30**, **8:00**")
         .setEphemeral(true)
-        .queue(
-            hook -> {
-              scheduleEphemeralDeletion(hook, 20);
-            });
+        .queue(hook -> scheduleEphemeralDeletion(hook, 20));
   }
 
-  // todo: extract this method
-  private void scheduleEphemeralDeletion(InteractionHook hook, int seconds) {
+  private void scheduleEphemeralDeletion(final InteractionHook hook, final int seconds) {
     scheduler.schedule(
-        () -> {
-          hook.deleteOriginal().queue(null, error -> {});
-        },
-        seconds,
-        TimeUnit.SECONDS);
+        () -> hook.deleteOriginal().queue(null, error -> {}), seconds, TimeUnit.SECONDS);
   }
 }

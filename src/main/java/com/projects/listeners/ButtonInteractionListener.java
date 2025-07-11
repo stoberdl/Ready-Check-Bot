@@ -11,43 +11,49 @@ import net.dv8tion.jda.api.interactions.components.text.TextInput;
 import net.dv8tion.jda.api.interactions.components.text.TextInputStyle;
 import net.dv8tion.jda.api.interactions.modals.Modal;
 
-public class ButtonInteractionListener extends ListenerAdapter {
+public final class ButtonInteractionListener extends ListenerAdapter {
   private static final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
+  private static final String READY_AT_PREFIX = "ready_at_";
+  private static final String READY_UNTIL_PREFIX = "ready_until_";
+  private static final String TOGGLE_READY_PREFIX = "toggle_ready_";
+  private static final String PASS_PREFIX = "pass_";
+  private static final String SAVE_READY_PREFIX = "save_ready_";
 
   @Override
-  public void onButtonInteraction(ButtonInteractionEvent event) {
-    String buttonId = event.getComponentId();
+  public void onButtonInteraction(final ButtonInteractionEvent event) {
+    final String buttonId = event.getComponentId();
 
-    if (buttonId.startsWith("toggle_ready_")) {
-      handleToggleReadyButton(event, extractReadyCheckId(buttonId, "toggle_ready_"));
-    } else if (buttonId.startsWith("pass_")) {
-      handlePassButton(event, extractReadyCheckId(buttonId, "pass_"));
-    } else if (buttonId.startsWith("ready_at_")) {
-      handleReadyAtButton(event, extractReadyCheckId(buttonId, "ready_at_"));
-    } else if (buttonId.startsWith("ready_until_")) {
-      handleReadyUntilButton(event, extractReadyCheckId(buttonId, "ready_until_"));
-    } else if (buttonId.startsWith("save_ready_")) {
-      handleSaveReadyButton(event, extractReadyCheckId(buttonId, "save_ready_"));
+    if (buttonId.startsWith(TOGGLE_READY_PREFIX)) {
+      handleToggleReadyButton(event, extractReadyCheckId(buttonId, TOGGLE_READY_PREFIX));
+    } else if (buttonId.startsWith(PASS_PREFIX)) {
+      handlePassButton(event, extractReadyCheckId(buttonId, PASS_PREFIX));
+    } else if (buttonId.startsWith(READY_AT_PREFIX)) {
+      handleReadyAtButton(event, extractReadyCheckId(buttonId, READY_AT_PREFIX));
+    } else if (buttonId.startsWith(READY_UNTIL_PREFIX)) {
+      handleReadyUntilButton(event, extractReadyCheckId(buttonId, READY_UNTIL_PREFIX));
+    } else if (buttonId.startsWith(SAVE_READY_PREFIX)) {
+      handleSaveReadyButton(event, extractReadyCheckId(buttonId, SAVE_READY_PREFIX));
     }
   }
 
-  private String extractReadyCheckId(String buttonId, String prefix) {
+  private String extractReadyCheckId(final String buttonId, final String prefix) {
     return buttonId.replace(prefix, "");
   }
 
-  private void scheduleEphemeralDeletion(InteractionHook hook, int seconds) {
+  private void scheduleEphemeralDeletion(final InteractionHook hook, final int seconds) {
     scheduler.schedule(
         () -> hook.deleteOriginal().queue(null, error -> {}), seconds, TimeUnit.SECONDS);
   }
 
-  private void handleToggleReadyButton(ButtonInteractionEvent event, String readyCheckId) {
-    String userId = event.getUser().getId();
+  private void handleToggleReadyButton(
+      final ButtonInteractionEvent event, final String readyCheckId) {
+    final String userId = event.getUser().getId();
 
     ReadyCheckManager.ensureUserInReadyCheck(readyCheckId, userId);
-    boolean isNowReady = ReadyCheckManager.toggleUserReady(readyCheckId, userId);
+    final boolean isNowReady = ReadyCheckManager.toggleUserReady(readyCheckId, userId);
     ReadyCheckManager.updateReadyCheckEmbed(readyCheckId, event.getJDA());
 
-    boolean allReady = ReadyCheckManager.checkIfAllReady(readyCheckId);
+    final boolean allReady = ReadyCheckManager.checkIfAllReady(readyCheckId);
 
     if (allReady && isNowReady) {
       ReadyCheckManager.notifyAllReady(readyCheckId, event.getJDA());
@@ -56,8 +62,8 @@ public class ButtonInteractionListener extends ListenerAdapter {
     event.deferEdit().queue();
   }
 
-  private void handlePassButton(ButtonInteractionEvent event, String readyCheckId) {
-    String userId = event.getUser().getId();
+  private void handlePassButton(final ButtonInteractionEvent event, final String readyCheckId) {
+    final String userId = event.getUser().getId();
     ReadyCheckManager.markUserPassed(readyCheckId, userId);
     ReadyCheckManager.updateReadyCheckEmbed(readyCheckId, event.getJDA());
 
@@ -67,28 +73,33 @@ public class ButtonInteractionListener extends ListenerAdapter {
         .queue(hook -> scheduleEphemeralDeletion(hook, 15));
   }
 
-  private void handleReadyAtButton(ButtonInteractionEvent event, String readyCheckId) {
-    String userId = event.getUser().getId();
+  private void handleReadyAtButton(final ButtonInteractionEvent event, final String readyCheckId) {
+    final String userId = event.getUser().getId();
     ReadyCheckManager.unmarkUserPassed(readyCheckId, userId);
 
-    TextInput timeInput = createTimeInput("When will you be ready?");
-    Modal modal =
-        createModal("ready_at_" + readyCheckId + "_" + userId, "Ready At Specific Time", timeInput);
-    event.replyModal(modal).queue();
-  }
-
-  private void handleReadyUntilButton(ButtonInteractionEvent event, String readyCheckId) {
-    String userId = event.getUser().getId();
-    ReadyCheckManager.unmarkUserPassed(readyCheckId, userId);
-
-    TextInput timeInput = createTimeInput("Ready until what time?");
-    Modal modal =
+    final TextInput timeInput = createTimeInput("When will you be ready?");
+    final Modal modal =
         createModal(
-            "ready_until_" + readyCheckId + "_" + userId, "Ready Until Specific Time", timeInput);
+            READY_AT_PREFIX + readyCheckId + "_" + userId, "Ready At Specific Time", timeInput);
     event.replyModal(modal).queue();
   }
 
-  private void handleSaveReadyButton(ButtonInteractionEvent event, String readyCheckId) {
+  private void handleReadyUntilButton(
+      final ButtonInteractionEvent event, final String readyCheckId) {
+    final String userId = event.getUser().getId();
+    ReadyCheckManager.unmarkUserPassed(readyCheckId, userId);
+
+    final TextInput timeInput = createTimeInput("Ready until what time?");
+    final Modal modal =
+        createModal(
+            READY_UNTIL_PREFIX + readyCheckId + "_" + userId,
+            "Ready Until Specific Time",
+            timeInput);
+    event.replyModal(modal).queue();
+  }
+
+  private void handleSaveReadyButton(
+      final ButtonInteractionEvent event, final String readyCheckId) {
     ReadyCheckManager.saveReadyCheck(readyCheckId);
     event
         .reply(
@@ -98,7 +109,7 @@ public class ButtonInteractionListener extends ListenerAdapter {
         .queue(hook -> scheduleEphemeralDeletion(hook, 20));
   }
 
-  private TextInput createTimeInput(String label) {
+  private TextInput createTimeInput(final String label) {
     return TextInput.create("time", label, TextInputStyle.SHORT)
         .setPlaceholder("Examples: 5, 530, 5:30, 5:30pm, 17:30")
         .setMinLength(1)
@@ -106,7 +117,7 @@ public class ButtonInteractionListener extends ListenerAdapter {
         .build();
   }
 
-  private Modal createModal(String modalId, String title, TextInput input) {
+  private Modal createModal(final String modalId, final String title, final TextInput input) {
     return Modal.create(modalId, title).addActionRow(input).build();
   }
 }

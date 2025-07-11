@@ -14,12 +14,16 @@ import net.dv8tion.jda.api.utils.cache.CacheFlag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class ReadyCheckBot {
+public final class ReadyCheckBot {
   private static final Logger logger = LoggerFactory.getLogger(ReadyCheckBot.class);
   private static JDA jda;
 
-  public static void main(String[] args) {
-    String botToken = BotConfig.getBotToken();
+  private ReadyCheckBot() {
+    // Private constructor to hide implicit public one
+  }
+
+  public static void main(final String[] args) {
+    final String botToken = BotConfig.getBotToken();
 
     if (botToken.isEmpty()) {
       logger.error("Bot token not found in config.properties. Please provide a valid token.");
@@ -45,10 +49,10 @@ public class ReadyCheckBot {
       ReadyCheckManager.setJDA(jda);
 
       registerSlashCommands();
-    } catch (InterruptedException e) {
+    } catch (final InterruptedException e) {
       logger.error("Bot startup was interrupted: ", e);
       Thread.currentThread().interrupt();
-    } catch (Exception e) {
+    } catch (final Exception e) {
       logger.error("Error starting the bot: ", e);
     }
   }

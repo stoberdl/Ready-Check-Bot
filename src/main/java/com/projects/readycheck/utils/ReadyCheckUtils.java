@@ -11,21 +11,21 @@ import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.interactions.components.buttons.Button;
 
-public class ReadyCheckUtils {
+public final class ReadyCheckUtils {
 
   private ReadyCheckUtils() {}
 
-  public static Set<String> getAllUsers(ReadyCheckManager.ReadyCheck readyCheck) {
-    Set<String> allUsers = new HashSet<>(readyCheck.getTargetUsers());
+  public static Set<String> getAllUsers(final ReadyCheckManager.ReadyCheck readyCheck) {
+    final Set<String> allUsers = new HashSet<>(readyCheck.getTargetUsers());
     allUsers.add(readyCheck.getInitiatorId());
     return allUsers;
   }
 
-  public static TextChannel getChannelFromGuild(Guild guild, String channelId) {
+  public static TextChannel getChannelFromGuild(final Guild guild, final String channelId) {
     return guild != null ? guild.getTextChannelById(channelId) : null;
   }
 
-  public static List<Button> createMainButtons(String readyCheckId) {
+  public static List<Button> createMainButtons(final String readyCheckId) {
     return Arrays.asList(
         Button.success("toggle_ready_" + readyCheckId, "Toggle Ready"),
         Button.primary("ready_at_" + readyCheckId, "Ready At..."),
@@ -33,14 +33,14 @@ public class ReadyCheckUtils {
         Button.danger("pass_" + readyCheckId, "Pass"));
   }
 
-  public static List<Button> createSaveButton(String readyCheckId) {
+  public static List<Button> createSaveButton(final String readyCheckId) {
     return Collections.singletonList(Button.secondary("save_ready_" + readyCheckId, "💾"));
   }
 
   public static String buildCheckDescription(
-      Member initiator, List<Member> targetMembers, String originalDescription) {
-    boolean initiatorInTargets = targetMembers.contains(initiator);
-    int totalUsers = targetMembers.size() + (initiatorInTargets ? 0 : 1);
+      final Member initiator, final List<Member> targetMembers, final String originalDescription) {
+    final boolean initiatorInTargets = targetMembers.contains(initiator);
+    final int totalUsers = targetMembers.size() + (initiatorInTargets ? 0 : 1);
 
     if (originalDescription.contains("specific users")) {
       return "**"
@@ -54,24 +54,25 @@ public class ReadyCheckUtils {
   }
 
   public static boolean userCanEngageWithReadyCheck(
-      ReadyCheckManager.ReadyCheck readyCheck, String userId) {
+      final ReadyCheckManager.ReadyCheck readyCheck, final String userId) {
     return readyCheck.getTargetUsers().contains(userId)
         || readyCheck.getPassedUsers().contains(userId)
         || readyCheck.getInitiatorId().equals(userId);
   }
 
-  public static Set<String> createUserSet(List<String> targetUserIds, String initiatorId) {
-    Set<String> allUserIds = new HashSet<>(targetUserIds);
+  public static Set<String> createUserSet(
+      final List<String> targetUserIds, final String initiatorId) {
+    final Set<String> allUserIds = new HashSet<>(targetUserIds);
     allUserIds.add(initiatorId);
     return allUserIds;
   }
 
   public static boolean matchesSavedCheck(
-      ReadyCheckManager.ReadyCheck check,
-      ReadyCheckManager.SavedReadyCheck savedCheck,
-      String initiatorId) {
+      final ReadyCheckManager.ReadyCheck check,
+      final ReadyCheckManager.SavedReadyCheck savedCheck,
+      final String initiatorId) {
     if (savedCheck.isUserBased()) {
-      Set<String> checkUserIds = new HashSet<>(check.getTargetUsers());
+      final Set<String> checkUserIds = new HashSet<>(check.getTargetUsers());
       checkUserIds.add(initiatorId);
       return checkUserIds.equals(new HashSet<>(savedCheck.getUserIds()));
     } else {

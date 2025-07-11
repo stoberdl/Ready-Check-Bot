@@ -5,7 +5,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
@@ -13,7 +12,7 @@ import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class MessageListener extends ListenerAdapter {
+public final class MessageListener extends ListenerAdapter {
   private static final Logger logger = LoggerFactory.getLogger(MessageListener.class);
 
   private static final Pattern R_PATTERN =
@@ -21,58 +20,59 @@ public class MessageListener extends ListenerAdapter {
   private static final int MAX_MESSAGE_LENGTH = 100;
 
   @Override
-  public void onMessageReceived(MessageReceivedEvent event) {
+  public void onMessageReceived(final MessageReceivedEvent event) {
     if (event.getAuthor().isBot() || !event.isFromGuild()) {
       return;
     }
 
-    String messageContent = event.getMessage().getContentRaw().trim();
+    final String messageContent = event.getMessage().getContentRaw().trim();
 
     if (messageContent.length() > MAX_MESSAGE_LENGTH) {
       return;
     }
 
-    Matcher matcher = R_PATTERN.matcher(messageContent);
+    final Matcher matcher = R_PATTERN.matcher(messageContent);
     if (matcher.matches()) {
-      String timeType = matcher.group(1);
-      String timeValue = matcher.group(2);
+      final String timeType = matcher.group(1);
+      final String timeValue = matcher.group(2);
       handleRMessage(event, timeType, timeValue);
     }
   }
 
-  private void handleRMessage(MessageReceivedEvent event, String timeType, String timeValue) {
-    String guildId = event.getGuild().getId();
-    Member initiator = event.getMember();
+  private void handleRMessage(
+      final MessageReceivedEvent event, final String timeType, final String timeValue) {
+    final String guildId = event.getGuild().getId();
+    final Member initiator = event.getMember();
     if (initiator == null) {
       logger.warn("Initiator member is null for guild: {}", guildId);
       return;
     }
 
-    String userId = initiator.getId();
-    String existingCheckId = ReadyCheckManager.findActiveReadyCheckForUser(guildId, userId);
+    final String userId = initiator.getId();
+    final String existingCheckId = ReadyCheckManager.findActiveReadyCheckForUser(guildId, userId);
 
     if (existingCheckId != null) {
       handleExistingReadyCheck(existingCheckId, userId, timeType, timeValue, event);
       return;
     }
 
-    List<ReadyCheckManager.SavedReadyCheck> savedChecks =
+    final List<ReadyCheckManager.SavedReadyCheck> savedChecks =
         ReadyCheckManager.getSavedReadyChecks(guildId);
 
     if (savedChecks.isEmpty()) {
       return;
     }
 
-    ReadyCheckManager.SavedReadyCheck lastSavedCheck = savedChecks.getLast();
+    final ReadyCheckManager.SavedReadyCheck lastSavedCheck = savedChecks.getLast();
     startReadyCheckFromSaved(event, lastSavedCheck, initiator, timeType, timeValue);
   }
 
   private void handleExistingReadyCheck(
-      String readyCheckId,
-      String userId,
-      String timeType,
-      String timeValue,
-      MessageReceivedEvent event) {
+      final String readyCheckId,
+      final String userId,
+      final String timeType,
+      final String timeValue,
+      final MessageReceivedEvent event) {
     try {
       ReadyCheckManager.unmarkUserPassed(readyCheckId, userId);
 
@@ -90,18 +90,18 @@ public class MessageListener extends ListenerAdapter {
       if (ReadyCheckManager.checkIfAllReady(readyCheckId)) {
         ReadyCheckManager.notifyAllReady(readyCheckId, event.getJDA());
       }
-    } catch (Exception e) {
+    } catch (final Exception e) {
       logger.debug(
           "Failed to parse time input '{}' for user {}: {}", timeValue, userId, e.getMessage());
     }
   }
 
   private void startReadyCheckFromSaved(
-      MessageReceivedEvent event,
-      ReadyCheckManager.SavedReadyCheck savedCheck,
-      Member initiator,
-      String timeType,
-      String timeValue) {
+      final MessageReceivedEvent event,
+      final ReadyCheckManager.SavedReadyCheck savedCheck,
+      final Member initiator,
+      final String timeType,
+      final String timeValue) {
     if (savedCheck.isUserBased()) {
       handleUserBasedSavedCheck(event, savedCheck, initiator, timeType, timeValue);
     } else {
@@ -110,51 +110,51 @@ public class MessageListener extends ListenerAdapter {
   }
 
   private void handleUserBasedSavedCheck(
-      MessageReceivedEvent event,
-      ReadyCheckManager.SavedReadyCheck savedCheck,
-      Member initiator,
-      String timeType,
-      String timeValue) {
-    List<Member> targetMembers =
+      final MessageReceivedEvent event,
+      final ReadyCheckManager.SavedReadyCheck savedCheck,
+      final Member initiator,
+      final String timeType,
+      final String timeValue) {
+    final List<Member> targetMembers =
         getValidMembersFromIds(event, savedCheck.getUserIds(), initiator.getId());
 
     if (targetMembers.isEmpty()) {
       return;
     }
 
-    String readyCheckId =
+    final String readyCheckId =
         ReadyCheckManager.createUserReadyCheck(
             event.getGuild().getId(), event.getChannel().getId(), initiator.getId(), targetMembers);
 
     ReadyCheckManager.setMentionPreference(readyCheckId, false);
     handleInitiatorReadyStatus(readyCheckId, initiator.getId(), timeType, timeValue, event);
 
-    String description =
+    final String description =
         "**" + initiator.getEffectiveName() + "** started a ready check for specific users";
     createReadyCheckResponseForMessage(event, readyCheckId, targetMembers, initiator, description);
   }
 
   private void handleRoleBasedSavedCheck(
-      MessageReceivedEvent event,
-      ReadyCheckManager.SavedReadyCheck savedCheck,
-      Member initiator,
-      String timeType,
-      String timeValue) {
-    Role targetRole = event.getGuild().getRoleById(savedCheck.getRoleId());
+      final MessageReceivedEvent event,
+      final ReadyCheckManager.SavedReadyCheck savedCheck,
+      final Member initiator,
+      final String timeType,
+      final String timeValue) {
+    final Role targetRole = event.getGuild().getRoleById(savedCheck.getRoleId());
     if (targetRole == null) {
       return;
     }
 
-    List<Member> targetMembers =
+    final List<Member> targetMembers =
         event.getGuild().getMembersWithRoles(targetRole).stream()
             .filter(member -> !member.equals(initiator))
-            .collect(Collectors.toList());
+            .toList();
 
     if (targetMembers.isEmpty()) {
       return;
     }
 
-    String readyCheckId =
+    final String readyCheckId =
         ReadyCheckManager.createReadyCheck(
             event.getGuild().getId(),
             event.getChannel().getId(),
@@ -165,7 +165,7 @@ public class MessageListener extends ListenerAdapter {
     ReadyCheckManager.setMentionPreference(readyCheckId, false);
     handleInitiatorReadyStatus(readyCheckId, initiator.getId(), timeType, timeValue, event);
 
-    String description =
+    final String description =
         "**"
             + initiator.getEffectiveName()
             + "** started a ready check for "
@@ -174,11 +174,11 @@ public class MessageListener extends ListenerAdapter {
   }
 
   private void handleInitiatorReadyStatus(
-      String readyCheckId,
-      String userId,
-      String timeType,
-      String timeValue,
-      MessageReceivedEvent event) {
+      final String readyCheckId,
+      final String userId,
+      final String timeType,
+      final String timeValue,
+      final MessageReceivedEvent event) {
     try {
       if (timeType == null) {
         ReadyCheckManager.markUserReady(readyCheckId, userId);
@@ -188,7 +188,7 @@ public class MessageListener extends ListenerAdapter {
         ReadyCheckManager.scheduleReadyAtSmart(
             readyCheckId, timeValue.trim(), userId, event.getJDA());
       }
-    } catch (Exception e) {
+    } catch (final Exception e) {
       logger.debug(
           "Failed to parse time input, marking user as ready immediately: {}", e.getMessage());
       ReadyCheckManager.markUserReady(readyCheckId, userId);
@@ -196,11 +196,11 @@ public class MessageListener extends ListenerAdapter {
   }
 
   private void createReadyCheckResponseForMessage(
-      MessageReceivedEvent event,
-      String readyCheckId,
-      List<Member> targetMembers,
-      Member initiator,
-      String description) {
+      final MessageReceivedEvent event,
+      final String readyCheckId,
+      final List<Member> targetMembers,
+      final Member initiator,
+      final String description) {
     ReadyCheckManager.sendReadyCheckToChannel(
         event.getChannel().asTextChannel(),
         readyCheckId,
@@ -211,12 +211,12 @@ public class MessageListener extends ListenerAdapter {
   }
 
   private List<Member> getValidMembersFromIds(
-      MessageReceivedEvent event, List<String> userIds, String initiatorId) {
+      final MessageReceivedEvent event, final List<String> userIds, final String initiatorId) {
     return userIds.stream()
         .filter(userId -> !userId.equals(initiatorId))
         .map(userId -> event.getGuild().getMemberById(userId))
         .filter(Objects::nonNull)
         .distinct()
-        .collect(Collectors.toList());
+        .toList();
   }
 }
