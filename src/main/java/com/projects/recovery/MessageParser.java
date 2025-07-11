@@ -10,18 +10,15 @@ import org.slf4j.LoggerFactory;
 public final class MessageParser {
   private static final Logger logger = LoggerFactory.getLogger(MessageParser.class);
 
-  // Fixed regex patterns to prevent polynomial backtracking
   private static final Pattern INITIATOR_PATTERN =
       Pattern.compile("\\*\\*([^*]{1,50})\\*\\* started a ready check");
 
   private static final Pattern USER_STATUS_PATTERN =
       Pattern.compile("([❌✅⏰🚫]) ([^\\n\\r]{1,100})(?:\\s+\\([^)]{1,50}\\))?", Pattern.MULTILINE);
 
-  private static final Pattern READY_COUNT_PATTERN = Pattern.compile("(\\d+)/(\\d+) ready");
+  private static final Pattern READY_COUNT_PATTERN = Pattern.compile("(\\d{1,3})/(\\d{1,3}) ready");
 
-  private MessageParser() {
-    // Private constructor to hide implicit public one
-  }
+  private MessageParser() {}
 
   public static RecoveredReadyCheckData parseEmbedContent(final String description) {
     if (description == null || description.trim().isEmpty()) {

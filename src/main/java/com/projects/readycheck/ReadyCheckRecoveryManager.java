@@ -17,9 +17,9 @@ import org.slf4j.LoggerFactory;
 
 public final class ReadyCheckRecoveryManager {
   private static final Logger logger = LoggerFactory.getLogger(ReadyCheckRecoveryManager.class);
-  private static final int RECOVERY_HOURS = 12;
+  private static final int RECOVERY_HOURS = 8;
   private static final String TOGGLE_READY_PREFIX = "toggle_ready_";
-  public static final int DEFAULT_MAX_MESSAGES = 10;
+  public static final int DEFAULT_MAX_MESSAGES = 15;
 
   private ReadyCheckRecoveryManager() {}
 

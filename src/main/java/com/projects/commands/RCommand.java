@@ -5,7 +5,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import java.util.stream.Collectors;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
@@ -83,27 +82,48 @@ public final class RCommand implements Command {
   private void showSavedConfigurationMenu(
       final SlashCommandInteractionEvent event,
       final List<ReadyCheckManager.SavedReadyCheck> savedChecks) {
-    final StringSelectMenu.Builder menuBuilder =
-        StringSelectMenu.create("select_saved_ready")
-            .setPlaceholder("Choose a saved ready check configuration...");
 
-    final Set<String> usedValues = new HashSet<>();
-    int userGroupCounter = 1;
+    final StringSelectMenu.Builder menuBuilder = createMenuBuilder();
+    final MenuState state = new MenuState();
+
+    populateMenuWithOptions(event, savedChecks, menuBuilder, state);
+    sendMenuToUser(event, menuBuilder);
+  }
+
+  private StringSelectMenu.Builder createMenuBuilder() {
+    return StringSelectMenu.create("select_saved_ready")
+        .setPlaceholder("Choose a saved ready check configuration...");
+  }
+
+  private void populateMenuWithOptions(
+      final SlashCommandInteractionEvent event,
+      final List<ReadyCheckManager.SavedReadyCheck> savedChecks,
+      final StringSelectMenu.Builder menuBuilder,
+      final MenuState state) {
 
     for (final ReadyCheckManager.SavedReadyCheck savedCheck : savedChecks) {
       if (savedCheck.isUserBased()) {
-        userGroupCounter =
-            addUserBasedOption(event, savedCheck, menuBuilder, usedValues, userGroupCounter);
+        state.userGroupCounter =
+            addUserBasedOption(
+                event, savedCheck, menuBuilder, state.usedValues, state.userGroupCounter);
       } else {
-        addRoleBasedOption(event, savedCheck, menuBuilder, usedValues);
+        addRoleBasedOption(event, savedCheck, menuBuilder, state.usedValues);
       }
     }
+  }
 
+  private void sendMenuToUser(
+      final SlashCommandInteractionEvent event, final StringSelectMenu.Builder menuBuilder) {
     event
         .reply("Select a saved configuration:")
         .addActionRow(menuBuilder.build())
         .setEphemeral(true)
         .queue();
+  }
+
+  private static class MenuState {
+    final Set<String> usedValues = new HashSet<>();
+    int userGroupCounter = 1;
   }
 
   private int addUserBasedOption(
@@ -155,7 +175,7 @@ public final class RCommand implements Command {
                   return member != null ? member.getEffectiveName() : "Unknown";
                 })
             .limit(3)
-            .collect(Collectors.joining(", "));
+            .collect(java.util.stream.Collectors.joining(", "));
 
     return userIds.size() > 3 ? names + " + " + (userIds.size() - 3) + " more" : names;
   }

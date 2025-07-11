@@ -1,6 +1,7 @@
 package com.projects.readycheck;
 
 import com.projects.readycheck.utils.ReadyCheckUtils;
+import com.projects.readycheck.utils.VoiceChannelMentionFilter;
 import java.awt.Color;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -14,6 +15,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Guild;
@@ -314,7 +316,6 @@ public final class ReadyCheckManager {
     updateMessage(readyCheck, channel, readyCheckId);
   }
 
-  // Completion handling
   public static void notifyAllReady(final String readyCheckId, final JDA jda) {
     final ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
     if (readyCheck == null) return;
@@ -327,13 +328,11 @@ public final class ReadyCheckManager {
     readyCheck.setStatus(ReadyCheckStatus.COMPLETED);
     final Set<String> allUsers = ReadyCheckUtils.getAllUsers(readyCheck);
     final List<String> readyUserNames = getReadyUserNames(readyCheck, allUsers, guild);
-    final String readyUserMentions =
-        createReadyUserMentions(readyCheck, allUsers, guild, readyCheckId);
+    final String readyUserMentions = createReadyUserMentions(readyCheck, allUsers, guild);
 
     replaceReadyCheckWithSummary(readyCheckId, jda, readyUserNames, readyUserMentions);
   }
 
-  // Resending existing ready checks
   public static void resendExistingReadyCheck(final String readyCheckId, final JDA jda) {
     final ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
     if (readyCheck == null) return;
@@ -572,25 +571,15 @@ public final class ReadyCheckManager {
   }
 
   private static String createReadyUserMentions(
-      final ReadyCheck readyCheck,
-      final Set<String> allUsers,
-      final Guild guild,
-      final String readyCheckId) {
+      final ReadyCheck readyCheck, final Set<String> allUsers, final Guild guild) {
 
-    if (!getMentionPreference(readyCheckId)) {
-      return "";
-    }
+    final Set<String> readyUsers =
+        allUsers.stream()
+            .filter(userId -> readyCheck.getReadyUsers().contains(userId))
+            .filter(userId -> !readyCheck.getPassedUsers().contains(userId))
+            .collect(Collectors.toSet());
 
-    return allUsers.stream()
-        .filter(userId -> readyCheck.getReadyUsers().contains(userId))
-        .filter(userId -> !readyCheck.getPassedUsers().contains(userId))
-        .map(
-            userId -> {
-              final Member member = guild.getMemberById(userId);
-              return member != null ? member.getAsMention() : null;
-            })
-        .filter(Objects::nonNull)
-        .collect(java.util.stream.Collectors.joining(" "));
+    return VoiceChannelMentionFilter.createCompletionMentions(readyUsers, guild);
   }
 
   private static void replaceReadyCheckWithSummary(
