@@ -111,8 +111,8 @@ public class ModalInteractionListener extends ListenerAdapter {
   private void replyWithTimeFormatError(ModalInteractionEvent event) {
     event
         .reply(
-            "❌ Invalid time format. Please use formats like: **5**, **530**, **5:30 PM**, **3:45pm**,"
-                + " **17:30**, **8:00**")
+            "❌ Invalid time format. Please use formats like: **5**, **530**, **5:30 PM**,"
+                + " **3:45pm**, **17:30**, **8:00**")
         .setEphemeral(true)
         .queue(
             hook -> {

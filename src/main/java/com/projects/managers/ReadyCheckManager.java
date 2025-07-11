@@ -38,6 +38,17 @@ public class ReadyCheckManager {
   static {
     loadSavedConfigurations();
     startPeriodicUpdater();
+
+    scheduler.schedule(
+        () -> {
+          if (globalJDA != null) {
+            ReadyCheckRecoveryManager.recoverReadyChecksFromMessages(globalJDA);
+          } else {
+            logger.warn("JDA not ready for recovery, skipping message recovery");
+          }
+        },
+        10,
+        TimeUnit.SECONDS);
   }
 
   public enum ReadyCheckStatus {
@@ -47,6 +58,52 @@ public class ReadyCheckManager {
 
   public static void setJDA(JDA jda) {
     globalJDA = jda;
+  }
+
+  public static boolean hasActiveReadyCheck(String readyCheckId) {
+    return activeReadyChecks.containsKey(readyCheckId);
+  }
+
+  public static void addRecoveredReadyCheck(String readyCheckId, ReadyCheck readyCheck) {
+    activeReadyChecks.put(readyCheckId, readyCheck);
+    logger.info("Added recovered ready check: {}", readyCheckId);
+  }
+
+  public static ReadyCheck createRecoveredReadyCheck(
+      String readyCheckId,
+      String guildId,
+      String channelId,
+      String initiatorId,
+      Set<String> targetUsers,
+      Set<String> readyUsers,
+      Set<String> passedUsers,
+      String messageId) {
+
+    ReadyCheck recoveredCheck =
+        new ReadyCheck(
+            readyCheckId,
+            guildId,
+            channelId,
+            initiatorId,
+            null, // roleId - null for recovered checks
+            new ArrayList<>(targetUsers));
+
+    recoveredCheck.getTargetUsers().clear();
+    recoveredCheck.getTargetUsers().addAll(targetUsers);
+    recoveredCheck.getReadyUsers().addAll(readyUsers);
+    recoveredCheck.getPassedUsers().addAll(passedUsers);
+    recoveredCheck.setMessageId(messageId);
+
+    return recoveredCheck;
+  }
+
+  public static EmbedBuilder buildReadyCheckEmbedForRecovery(
+      ReadyCheck readyCheck, JDA jda, String description) {
+    return buildReadyCheckEmbed(readyCheck, jda, description);
+  }
+
+  public static JDA getJDA() {
+    return globalJDA;
   }
 
   public static void setMentionPreference(String readyCheckId, boolean mentionPeople) {
@@ -1155,7 +1212,7 @@ public class ReadyCheckManager {
     return "❌ " + displayName;
   }
 
-  private static List<Button> createMainButtons(String readyCheckId) {
+  public static List<Button> createMainButtons(String readyCheckId) {
     return Arrays.asList(
         Button.success("toggle_ready_" + readyCheckId, "Toggle Ready"),
         Button.primary("ready_at_" + readyCheckId, "Ready At..."),
@@ -1163,7 +1220,7 @@ public class ReadyCheckManager {
         Button.danger("pass_" + readyCheckId, "Pass"));
   }
 
-  private static List<Button> createSaveButton(String readyCheckId) {
+  public static List<Button> createSaveButton(String readyCheckId) {
     return Collections.singletonList(Button.secondary("save_ready_" + readyCheckId, "💾"));
   }
 
