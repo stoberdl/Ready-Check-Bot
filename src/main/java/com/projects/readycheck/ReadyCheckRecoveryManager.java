@@ -1,8 +1,9 @@
-package com.projects.managers;
+package com.projects.readycheck;
 
-import com.projects.models.recovery.RecoveredReadyCheckData;
-import com.projects.models.recovery.RecoveryConfig;
+import com.projects.readycheck.utils.ReadyCheckUtils;
 import com.projects.recovery.MessageParser;
+import com.projects.recovery.RecoveredReadyCheckData;
+import com.projects.recovery.RecoveryConfig;
 import com.projects.recovery.UserResolver;
 import java.util.concurrent.TimeUnit;
 import net.dv8tion.jda.api.JDA;
@@ -76,7 +77,7 @@ public class ReadyCheckRecoveryManager {
       return false;
     }
 
-    var embed = message.getEmbeds().getFirst();
+    var embed = message.getEmbeds().get(0);
     if (embed.getTitle() == null) {
       return false;
     }
@@ -95,26 +96,26 @@ public class ReadyCheckRecoveryManager {
                     && button.getId().startsWith(TOGGLE_READY_PREFIX));
   }
 
-  private static void recoverReadyCheckFromMessage(Message message) {
+  private static boolean recoverReadyCheckFromMessage(Message message) {
     try {
-      var embed = message.getEmbeds().getFirst();
+      var embed = message.getEmbeds().get(0);
 
       String readyCheckId = extractReadyCheckId(message);
       if (readyCheckId == null) {
         logger.debug("No ready check ID found in message: {}", message.getId());
-        return;
+        return false;
       }
 
       if (ReadyCheckManager.hasActiveReadyCheck(readyCheckId)) {
         logger.debug("Ready check {} already exists, skipping recovery", readyCheckId);
-        return;
+        return false;
       }
 
       RecoveredReadyCheckData data = MessageParser.parseEmbedContent(embed.getDescription());
 
       if (data == null) {
         logger.debug("Could not parse embed content from message: {}", message.getId());
-        return;
+        return false;
       }
 
       ReadyCheckManager.ReadyCheck recoveredCheck =
@@ -127,7 +128,7 @@ public class ReadyCheckRecoveryManager {
 
       if (recoveredCheck == null) {
         logger.debug("Could not create recovered ready check from message: {}", message.getId());
-        return;
+        return false;
       }
 
       ReadyCheckManager.addRecoveredReadyCheck(readyCheckId, recoveredCheck);
@@ -140,9 +141,12 @@ public class ReadyCheckRecoveryManager {
           recoveredCheck.getTargetUsers().size(),
           message.getGuild().getName());
 
+      return true;
+
     } catch (Exception e) {
       logger.debug(
           "Failed to recover ready check from message {}: {}", message.getId(), e.getMessage());
+      return false;
     }
   }
 
@@ -189,7 +193,8 @@ public class ReadyCheckRecoveryManager {
             resolvedUsers.passedUsers(),
             messageId);
 
-    recoveredCheck.setDescription(data.initiatorName() + "'s ready check(🔄)");
+    recoveredCheck.setDescription("**" + data.initiatorName() + "** started a ready check");
+    recoveredCheck.setRecovered(true);
 
     return recoveredCheck;
   }
@@ -201,8 +206,8 @@ public class ReadyCheckRecoveryManager {
           ReadyCheckManager.buildReadyCheckEmbedForRecovery(
               readyCheck, message.getJDA(), readyCheck.getDescription());
 
-      var mainButtons = ReadyCheckManager.createMainButtons(readyCheckId);
-      var saveButton = ReadyCheckManager.createSaveButton(readyCheckId);
+      var mainButtons = ReadyCheckUtils.createMainButtons(readyCheckId);
+      var saveButton = ReadyCheckUtils.createSaveButton(readyCheckId);
 
       message
           .editMessageEmbeds(embed.build())

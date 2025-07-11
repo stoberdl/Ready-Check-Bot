@@ -1,4 +1,4 @@
-package com.projects.models.recovery;
+package com.projects.recovery;
 
 /**
  * @param status ❌, ✅, ⏰, 🚫

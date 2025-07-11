@@ -1,6 +1,6 @@
 package com.projects.commands;
 
-import com.projects.managers.ReadyCheckManager;
+import com.projects.readycheck.ReadyCheckManager;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;

@@ -1,6 +1,6 @@
 package com.projects.listeners;
 
-import com.projects.managers.ReadyCheckManager;
+import com.projects.readycheck.ReadyCheckManager;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -68,22 +68,23 @@ public class ButtonInteractionListener extends ListenerAdapter {
   }
 
   private void handleReadyAtButton(ButtonInteractionEvent event, String readyCheckId) {
+    String userId = event.getUser().getId();
+    ReadyCheckManager.unmarkUserPassed(readyCheckId, userId);
+
     TextInput timeInput = createTimeInput("When will you be ready?");
     Modal modal =
-        createModal(
-            "ready_at_" + readyCheckId + "_" + event.getUser().getId(),
-            "Ready At Specific Time",
-            timeInput);
+        createModal("ready_at_" + readyCheckId + "_" + userId, "Ready At Specific Time", timeInput);
     event.replyModal(modal).queue();
   }
 
   private void handleReadyUntilButton(ButtonInteractionEvent event, String readyCheckId) {
+    String userId = event.getUser().getId();
+    ReadyCheckManager.unmarkUserPassed(readyCheckId, userId);
+
     TextInput timeInput = createTimeInput("Ready until what time?");
     Modal modal =
         createModal(
-            "ready_until_" + readyCheckId + "_" + event.getUser().getId(),
-            "Ready Until Specific Time",
-            timeInput);
+            "ready_until_" + readyCheckId + "_" + userId, "Ready Until Specific Time", timeInput);
     event.replyModal(modal).queue();
   }
 

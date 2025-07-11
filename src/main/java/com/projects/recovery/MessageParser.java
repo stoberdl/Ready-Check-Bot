@@ -1,7 +1,5 @@
 package com.projects.recovery;
 
-import com.projects.models.recovery.RecoveredReadyCheckData;
-import com.projects.models.recovery.UserState;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -13,10 +11,10 @@ public class MessageParser {
   private static final Logger logger = LoggerFactory.getLogger(MessageParser.class);
 
   private static final Pattern INITIATOR_PATTERN =
-      Pattern.compile("\\*\\*([^*]+)\\*\\* started a ready check");
+      Pattern.compile("\\*\\*([^*]{1,50})\\*\\* started a ready check");
 
   private static final Pattern USER_STATUS_PATTERN =
-      Pattern.compile("([❌✅⏰🚫]) ([^\\n]+?)(?:\\s+\\([^)]+\\))?$", Pattern.MULTILINE);
+      Pattern.compile("([❌✅⏰🚫]) ([^\\n\\r]{1,100})(?:\\s+\\([^)]{1,50}\\))?$", Pattern.MULTILINE);
 
   private static final Pattern READY_COUNT_PATTERN = Pattern.compile("(\\d+)/(\\d+) ready");
 
@@ -63,11 +61,19 @@ public class MessageParser {
       return name;
     }
 
-    Pattern recoveredPattern = Pattern.compile("\\*\\*Recovered\\*\\* ([^']+)'s ready check");
-    matcher = recoveredPattern.matcher(description);
+    Pattern recoveryPattern = Pattern.compile("([^']{1,50})'s ready check\\(🔄️?\\)");
+    matcher = recoveryPattern.matcher(description);
     if (matcher.find()) {
       String name = matcher.group(1).trim();
-      logger.debug("Found recovered initiator: {}", name);
+      logger.debug("Found recovery initiator: {}", name);
+      return name;
+    }
+
+    Pattern simpleRecoveryPattern = Pattern.compile("([^']{1,50})'s ready check");
+    matcher = simpleRecoveryPattern.matcher(description);
+    if (matcher.find()) {
+      String name = matcher.group(1).trim();
+      logger.debug("Found simple recovery initiator: {}", name);
       return name;
     }
 

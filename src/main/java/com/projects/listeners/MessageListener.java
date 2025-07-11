@@ -1,6 +1,6 @@
 package com.projects.listeners;
 
-import com.projects.managers.ReadyCheckManager;
+import com.projects.readycheck.ReadyCheckManager;
 import java.util.List;
 import java.util.Objects;
 import java.util.regex.Matcher;

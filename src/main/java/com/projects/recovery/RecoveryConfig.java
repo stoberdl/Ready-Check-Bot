@@ -1,4 +1,4 @@
-package com.projects.models.recovery;
+package com.projects.recovery;
 
 public class RecoveryConfig {
   public static final int DEFAULT_RECOVERY_HOURS = 2;

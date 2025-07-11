@@ -2,7 +2,7 @@ package com.projects;
 
 import com.projects.botConfig.BotConfig;
 import com.projects.listeners.*;
-import com.projects.managers.ReadyCheckManager;
+import com.projects.readycheck.ReadyCheckManager;
 import java.util.EnumSet;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;

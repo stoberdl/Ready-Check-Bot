@@ -1,8 +1,6 @@
 package com.projects.recovery;
 
-import com.projects.managers.ReadyCheckManager;
-import com.projects.models.recovery.ResolvedUserStates;
-import com.projects.models.recovery.UserState;
+import com.projects.readycheck.ReadyCheckManager;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
