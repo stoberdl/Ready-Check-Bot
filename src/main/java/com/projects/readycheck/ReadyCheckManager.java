@@ -411,6 +411,7 @@ public final class ReadyCheckManager {
             () -> {
               if (globalJDA != null) {
                 ReadyCheckRecoveryManager.recoverReadyChecksFromMessages(globalJDA);
+                com.projects.recovery.MentionRecoveryManager.recoverMissedMentions(globalJDA);
               } else {
                 logger.warn("JDA not ready for recovery, skipping message recovery");
               }
