@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.MessageEmbed;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
@@ -327,16 +328,13 @@ public final class ReadyCheckRecoveryManager {
           && !member.getVoiceState().isDeafened()) {
         readyCheck.getReadyUsers().add(userId);
         readyCheck.getPassedUsers().remove(userId);
+        ReadyCheckManager.updateReadyCheckEmbed(readyCheckId, jda);
       } else {
         final TextChannel channel = guild.getTextChannelById(readyCheck.getChannelId());
-        if (channel != null) {
-          channel
-              .sendMessage("⏰ " + member.getAsMention() + " it's time to be ready!")
-              .queue(null, error -> {});
-        }
-      }
+        if (channel == null) return;
 
-      ReadyCheckManager.updateReadyCheckEmbed(readyCheckId, jda);
+        deleteOldMessageAndSendReminder(readyCheck, readyCheckId, member, channel, jda);
+      }
 
       if (ReadyCheckManager.checkIfAllReady(readyCheckId)) {
         ReadyCheckManager.notifyAllReady(readyCheckId, jda);
@@ -344,6 +342,50 @@ public final class ReadyCheckRecoveryManager {
     } catch (final Exception e) {
       logger.debug("Error in recovered reminder for user {}: {}", userId, e.getMessage());
     }
+  }
+
+  private static void deleteOldMessageAndSendReminder(
+      final ReadyCheckManager.ReadyCheck readyCheck,
+      final String readyCheckId,
+      final Member member,
+      final TextChannel channel,
+      final JDA jda) {
+    if (readyCheck.getMessageId() != null) {
+      channel
+          .retrieveMessageById(readyCheck.getMessageId())
+          .queue(
+              oldMessage -> {
+                oldMessage.delete().queue(null, error -> {});
+                sendUpdatedReadyCheckWithReminder(readyCheckId, member, jda);
+              },
+              error -> sendUpdatedReadyCheckWithReminder(readyCheckId, member, jda));
+    } else {
+      sendUpdatedReadyCheckWithReminder(readyCheckId, member, jda);
+    }
+  }
+
+  private static void sendUpdatedReadyCheckWithReminder(
+      final String readyCheckId, final Member member, final JDA jda) {
+    final ReadyCheckManager.ReadyCheck readyCheck =
+        ReadyCheckManager.getActiveReadyCheck(readyCheckId);
+    if (readyCheck == null) return;
+
+    final Guild guild = jda.getGuildById(readyCheck.getGuildId());
+    final TextChannel channel =
+        ReadyCheckUtils.getChannelFromGuild(guild, readyCheck.getChannelId());
+    if (channel == null) return;
+
+    final var embed =
+        ReadyCheckEmbedBuilder.buildReadyCheckEmbed(readyCheck, jda, readyCheck.getDescription());
+    final var mainButtons = ReadyCheckUtils.createMainButtons(readyCheckId);
+    final var saveButton = ReadyCheckUtils.createSaveButton(readyCheckId);
+    final String reminderText = "⏰ " + member.getAsMention() + " it's time to be ready!";
+
+    channel
+        .sendMessage(reminderText)
+        .setEmbeds(embed.build())
+        .setComponents(ActionRow.of(mainButtons), ActionRow.of(saveButton))
+        .queue(newMessage -> readyCheck.setMessageId(newMessage.getId()));
   }
 
   private static void updateRecoveredMessage(

@@ -37,7 +37,8 @@ public class UserResolver {
 
     members = guild.getMembersByEffectiveName(cleanName, false);
     if (!members.isEmpty()) {
-      logger.debug("Case-insensitive match found for '{}': {}", cleanName, members.getFirst().getId());
+      logger.debug(
+          "Case-insensitive match found for '{}': {}", cleanName, members.getFirst().getId());
       return members.getFirst().getId();
     }
 
