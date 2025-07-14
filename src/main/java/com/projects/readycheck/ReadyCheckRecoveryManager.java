@@ -4,6 +4,7 @@ import com.projects.readycheck.utils.ReadyCheckUtils;
 import com.projects.recovery.MessageParser;
 import com.projects.recovery.RecoveredReadyCheckData;
 import com.projects.recovery.UserResolver;
+import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Guild;
@@ -64,7 +65,7 @@ public final class ReadyCheckRecoveryManager {
               }
             });
 
-    return 0; // Async operation, can't return actual count
+    return 0;
   }
 
   private static boolean isRecoverableMessage(final Message message, final long cutoffTime) {
@@ -112,7 +113,7 @@ public final class ReadyCheckRecoveryManager {
         return;
       }
 
-      attemptRecovery(message, embed, readyCheckId);
+      attemptEnhancedRecovery(message, embed, readyCheckId);
 
     } catch (final Exception e) {
       logger.debug(
@@ -120,21 +121,28 @@ public final class ReadyCheckRecoveryManager {
     }
   }
 
-  private static void attemptRecovery(
+  private static void attemptEnhancedRecovery(
       final Message message, final MessageEmbed embed, final String readyCheckId) {
-    final RecoveredReadyCheckData data = MessageParser.parseEmbedContent(embed.getDescription());
+    final Instant embedTimestamp =
+        embed.getTimestamp() != null
+            ? embed.getTimestamp().toInstant()
+            : message.getTimeCreated().toInstant();
+
+    final RecoveredReadyCheckData data =
+        MessageParser.parseEmbedContent(embed.getDescription(), embedTimestamp);
     if (data == null) {
       logger.debug("Could not parse embed content from message: {}", message.getId());
       return;
     }
 
     final ReadyCheckManager.ReadyCheck recoveredCheck =
-        createRecoveredReadyCheck(
+        createEnhancedRecoveredReadyCheck(
             readyCheckId,
             message.getGuild().getId(),
             message.getChannel().getId(),
             data,
-            message.getId());
+            message.getId(),
+            message.getJDA());
 
     if (recoveredCheck == null) {
       logger.debug("Could not create recovered ready check from message: {}", message.getId());
@@ -145,7 +153,7 @@ public final class ReadyCheckRecoveryManager {
     updateRecoveredMessage(message, recoveredCheck, readyCheckId);
 
     logger.info(
-        "Recovered ready check {} with {} users in {}",
+        "Recovered ready check {} with {} users and timing data in {}",
         readyCheckId,
         recoveredCheck.getTargetUsers().size(),
         message.getGuild().getName());
@@ -162,12 +170,13 @@ public final class ReadyCheckRecoveryManager {
         .orElse(null);
   }
 
-  private static ReadyCheckManager.ReadyCheck createRecoveredReadyCheck(
+  private static ReadyCheckManager.ReadyCheck createEnhancedRecoveredReadyCheck(
       final String readyCheckId,
       final String guildId,
       final String channelId,
       final RecoveredReadyCheckData data,
-      final String messageId) {
+      final String messageId,
+      final JDA jda) {
 
     final String initiatorId = UserResolver.resolveUserId(data.initiatorName(), guildId);
     if (initiatorId == null) {
@@ -175,7 +184,7 @@ public final class ReadyCheckRecoveryManager {
       return null;
     }
 
-    final var resolvedUsers = UserResolver.resolveUserStates(data.userStates(), guildId);
+    final var resolvedUsers = UserResolver.resolveEnhancedUserStates(data.userStates(), guildId);
     if (resolvedUsers.targetUsers().isEmpty()) {
       logger.warn("No users could be resolved for ready check: {}", readyCheckId);
       return null;
@@ -187,7 +196,7 @@ public final class ReadyCheckRecoveryManager {
             guildId,
             channelId,
             initiatorId,
-            null, // roleId
+            null,
             resolvedUsers.targetUsers(),
             resolvedUsers.readyUsers(),
             resolvedUsers.passedUsers(),
@@ -196,7 +205,145 @@ public final class ReadyCheckRecoveryManager {
     recoveredCheck.setDescription("**" + data.initiatorName() + "** started a ready check");
     recoveredCheck.setRecovered(true);
 
+    scheduleRecoveredTimingEvents(recoveredCheck, resolvedUsers, jda);
+
     return recoveredCheck;
+  }
+
+  private static void scheduleRecoveredTimingEvents(
+      final ReadyCheckManager.ReadyCheck readyCheck,
+      final UserResolver.EnhancedResolvedUserStates resolvedUsers,
+      final JDA jda) {
+
+    final Instant now = Instant.now();
+
+    for (final var entry : resolvedUsers.userTimingData().entrySet()) {
+      final String userId = entry.getKey();
+      final MessageParser.TimingData timing = entry.getValue();
+
+      try {
+        switch (timing.type()) {
+          case READY_AT -> {
+            if (timing.targetTime() != null) {
+              if (timing.targetTime().isAfter(now)) {
+                scheduleRecoveredReadyAt(readyCheck, userId, timing.targetTime(), jda);
+              } else {
+                sendPastDueReminder(readyCheck, userId, jda);
+              }
+            }
+          }
+          case READY_UNTIL -> {
+            if (timing.targetTime() != null) {
+              if (timing.targetTime().isAfter(now)) {
+                scheduleRecoveredReadyUntil(readyCheck, userId, timing.targetTime());
+              } else {
+                readyCheck.getPassedUsers().add(userId);
+                readyCheck.getReadyUsers().remove(userId);
+              }
+            }
+          }
+          case AUTO_UNREADY -> {
+            if (timing.data() instanceof Integer minutes) {
+              readyCheck.getUserTimers().put(userId, minutes);
+            }
+          }
+        }
+      } catch (final Exception e) {
+        logger.debug("Failed to schedule recovered timing for user {}: {}", userId, e.getMessage());
+      }
+    }
+  }
+
+  private static void scheduleRecoveredReadyAt(
+      final ReadyCheckManager.ReadyCheck readyCheck,
+      final String userId,
+      final Instant targetTime,
+      final JDA jda) {
+
+    final long delayMs = targetTime.toEpochMilli() - System.currentTimeMillis();
+    final long delayMinutes = Math.max(1, delayMs / 60000);
+
+    final var reminderFuture =
+        ReadyCheckScheduler.getScheduler()
+            .schedule(
+                () -> sendRecoveredReminder(readyCheck.getId(), userId, jda),
+                delayMinutes,
+                TimeUnit.MINUTES);
+
+    final ReadyCheckManager.ScheduledUser scheduledUser =
+        new ReadyCheckManager.ScheduledUser(targetTime.toEpochMilli(), reminderFuture);
+    readyCheck.getScheduledUsers().put(userId, scheduledUser);
+  }
+
+  private static void scheduleRecoveredReadyUntil(
+      final ReadyCheckManager.ReadyCheck readyCheck,
+      final String userId,
+      final Instant targetTime) {
+
+    final long delayMs = targetTime.toEpochMilli() - System.currentTimeMillis();
+    final long delayMinutes = Math.max(1, delayMs / 60000);
+
+    final var untilFuture =
+        ReadyCheckScheduler.getScheduler()
+            .schedule(
+                () -> {
+                  readyCheck.getPassedUsers().add(userId);
+                  readyCheck.getReadyUsers().remove(userId);
+                  readyCheck.getUserUntilTimes().remove(userId);
+                },
+                delayMinutes,
+                TimeUnit.MINUTES);
+
+    readyCheck.getScheduledUntilFutures().put(userId, untilFuture);
+    final String discordTimestamp = "<t:" + targetTime.getEpochSecond() + ":t>";
+    readyCheck.getUserUntilTimes().put(userId, discordTimestamp);
+  }
+
+  private static void sendPastDueReminder(
+      final ReadyCheckManager.ReadyCheck readyCheck, final String userId, final JDA jda) {
+
+    ReadyCheckScheduler.getScheduler()
+        .schedule(
+            () -> sendRecoveredReminder(readyCheck.getId(), userId, jda), 5, TimeUnit.SECONDS);
+  }
+
+  private static void sendRecoveredReminder(
+      final String readyCheckId, final String userId, final JDA jda) {
+    try {
+      final ReadyCheckManager.ReadyCheck readyCheck =
+          ReadyCheckManager.getActiveReadyCheck(readyCheckId);
+      if (readyCheck == null) return;
+
+      final Guild guild = jda.getGuildById(readyCheck.getGuildId());
+      if (guild == null) return;
+
+      final var member = guild.getMemberById(userId);
+      if (member == null) return;
+
+      readyCheck.getScheduledUsers().remove(userId);
+
+      if (member.getVoiceState() != null
+          && member.getVoiceState().inAudioChannel()
+          && !member.getVoiceState().isDeafened()) {
+        readyCheck.getReadyUsers().add(userId);
+        readyCheck.getPassedUsers().remove(userId);
+      } else {
+        final TextChannel channel = guild.getTextChannelById(readyCheck.getChannelId());
+        if (channel != null) {
+          channel
+              .sendMessage("⏰ " + member.getAsMention() + " it's time to be ready!")
+              .queue(null, error -> {});
+        }
+      }
+
+      ReadyCheckManager.updateReadyCheckEmbed(readyCheckId, jda);
+
+      if (ReadyCheckManager.checkIfAllReady(readyCheckId)) {
+        ReadyCheckManager.notifyAllReady(readyCheckId, jda);
+      }
+    } catch (final Exception e) {
+      logger.debug("Error in recovered reminder for user {}: {}", userId, e.getMessage());
+    }
   }
 
   private static void updateRecoveredMessage(

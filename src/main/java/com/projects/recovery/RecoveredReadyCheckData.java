@@ -2,7 +2,8 @@ package com.projects.recovery;
 
 import java.util.List;
 
-public record RecoveredReadyCheckData(String initiatorName, List<UserState> userStates) {
+public record RecoveredReadyCheckData(
+    String initiatorName, List<MessageParser.EnhancedUserState> userStates) {
 
   @Override
   public String toString() {

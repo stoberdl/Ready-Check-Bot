@@ -1,8 +1,10 @@
 package com.projects.recovery;
 
 import com.projects.readycheck.ReadyCheckManager;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
@@ -12,9 +14,7 @@ import org.slf4j.LoggerFactory;
 public class UserResolver {
   private static final Logger logger = LoggerFactory.getLogger(UserResolver.class);
 
-  private UserResolver() {
-    // Private constructor to hide implicit public one
-  }
+  private UserResolver() {}
 
   public static String resolveUserId(String displayName, String guildId) {
     if (displayName == null || displayName.trim().isEmpty()) {
@@ -31,14 +31,14 @@ public class UserResolver {
 
     List<Member> members = guild.getMembersByEffectiveName(cleanName, true);
     if (!members.isEmpty()) {
-      logger.debug("Exact match found for '{}': {}", cleanName, members.get(0).getId());
-      return members.get(0).getId();
+      logger.debug("Exact match found for '{}': {}", cleanName, members.getFirst().getId());
+      return members.getFirst().getId();
     }
 
     members = guild.getMembersByEffectiveName(cleanName, false);
     if (!members.isEmpty()) {
-      logger.debug("Case-insensitive match found for '{}': {}", cleanName, members.get(0).getId());
-      return members.get(0).getId();
+      logger.debug("Case-insensitive match found for '{}': {}", cleanName, members.getFirst().getId());
+      return members.getFirst().getId();
     }
 
     String userId = searchByUsername(guild, cleanName);
@@ -84,26 +84,36 @@ public class UserResolver {
         .orElse(null);
   }
 
-  public static ResolvedUserStates resolveUserStates(List<UserState> userStates, String guildId) {
+  public static EnhancedResolvedUserStates resolveEnhancedUserStates(
+      List<MessageParser.EnhancedUserState> userStates, String guildId) {
     Set<String> targetUsers = new HashSet<>();
     Set<String> readyUsers = new HashSet<>();
     Set<String> passedUsers = new HashSet<>();
     Set<String> scheduledUsers = new HashSet<>();
+    Map<String, MessageParser.TimingData> userTimingData = new HashMap<>();
     int unresolvedCount = 0;
 
-    for (UserState userState : userStates) {
+    for (MessageParser.EnhancedUserState userState : userStates) {
       String userId = resolveUserId(userState.displayName(), guildId);
 
       if (userId != null) {
         targetUsers.add(userId);
 
         switch (userState.status()) {
-          case "✅" -> readyUsers.add(userId);
-          case "🚫" -> passedUsers.add(userId);
-          case "⏰" -> scheduledUsers.add(userId);
-          case "❌" -> {
-            // Not ready, just in targets
+          case "✅" -> {
+            readyUsers.add(userId);
+            if (userState.timing().type() != MessageParser.TimingType.NONE) {
+              userTimingData.put(userId, userState.timing());
+            }
           }
+          case "🚫" -> passedUsers.add(userId);
+          case "⏰" -> {
+            scheduledUsers.add(userId);
+            if (userState.timing().type() != MessageParser.TimingType.NONE) {
+              userTimingData.put(userId, userState.timing());
+            }
+          }
+          case "❌" -> {}
           default ->
               logger.debug(
                   "Unknown status '{}' for user '{}'", userState.status(), userState.displayName());
@@ -120,54 +130,15 @@ public class UserResolver {
     logger.debug(
         "Resolved {}/{} users in guild {}", targetUsers.size(), userStates.size(), guildId);
 
-    return new ResolvedUserStates(
-        targetUsers, readyUsers, passedUsers, scheduledUsers, unresolvedCount);
+    return new EnhancedResolvedUserStates(
+        targetUsers, readyUsers, passedUsers, scheduledUsers, userTimingData, unresolvedCount);
   }
 
-  public static boolean validateUserId(String userId, String guildId) {
-    if (userId == null || guildId == null) {
-      return false;
-    }
-
-    Guild guild = ReadyCheckManager.getJDA().getGuildById(guildId);
-    if (guild == null) {
-      return false;
-    }
-
-    Member member = guild.getMemberById(userId);
-    return member != null;
-  }
-
-  public static String getCurrentDisplayName(String userId, String guildId) {
-    Guild guild = ReadyCheckManager.getJDA().getGuildById(guildId);
-    if (guild == null) {
-      return "Unknown User";
-    }
-
-    Member member = guild.getMemberById(userId);
-    return member != null ? member.getEffectiveName() : "Unknown User";
-  }
-
-  public static List<String> findPotentialMatches(String displayName, String guildId) {
-    Guild guild = ReadyCheckManager.getJDA().getGuildById(guildId);
-    if (guild == null) {
-      return List.of();
-    }
-
-    String lowerName = displayName.toLowerCase();
-
-    return guild.getMembers().stream()
-        .filter(
-            member -> {
-              String effectiveName = member.getEffectiveName().toLowerCase();
-              String userName = member.getUser().getName().toLowerCase();
-
-              return effectiveName.contains(lowerName)
-                  || userName.contains(lowerName)
-                  || lowerName.contains(effectiveName)
-                  || lowerName.contains(userName);
-            })
-        .map(member -> String.format("%s (%s)", member.getEffectiveName(), member.getId()))
-        .toList();
-  }
+  public record EnhancedResolvedUserStates(
+      Set<String> targetUsers,
+      Set<String> readyUsers,
+      Set<String> passedUsers,
+      Set<String> scheduledUsers,
+      Map<String, MessageParser.TimingData> userTimingData,
+      int unresolvedCount) {}
 }

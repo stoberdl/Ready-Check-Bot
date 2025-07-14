@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -167,10 +168,11 @@ public final class ReadyCheckScheduler {
         continue;
       }
 
+      final boolean botsRemoved = removeBotsFromReadyCheck(readyCheck, jda);
       final boolean embedNeedsUpdate = checkAndReadyUsersInVoice(readyCheck, jda);
       final boolean hasScheduledUsers = !readyCheck.getScheduledUsers().isEmpty();
 
-      if (hasScheduledUsers || embedNeedsUpdate) {
+      if (hasScheduledUsers || embedNeedsUpdate || botsRemoved) {
         ReadyCheckManager.updateReadyCheckEmbed(readyCheck.getId(), jda);
       }
 
@@ -178,6 +180,41 @@ public final class ReadyCheckScheduler {
         ReadyCheckManager.notifyAllReady(readyCheck.getId(), jda);
       }
     }
+  }
+
+  private static boolean removeBotsFromReadyCheck(
+      final ReadyCheckManager.ReadyCheck readyCheck, final JDA jda) {
+    final Guild guild = jda.getGuildById(readyCheck.getGuildId());
+    if (guild == null) return false;
+
+    final Set<String> allUsers = ReadyCheckUtils.getAllUsers(readyCheck);
+    final Set<String> botUsers = new HashSet<>();
+
+    for (final String userId : allUsers) {
+      final Member member = guild.getMemberById(userId);
+      if (member != null && member.getUser().isBot()) {
+        botUsers.add(userId);
+      }
+    }
+
+    if (botUsers.isEmpty()) return false;
+
+    for (final String botUserId : botUsers) {
+      readyCheck.getTargetUsers().remove(botUserId);
+      readyCheck.getReadyUsers().remove(botUserId);
+      readyCheck.getPassedUsers().remove(botUserId);
+      readyCheck.getScheduledUsers().remove(botUserId);
+      readyCheck.getUserTimers().remove(botUserId);
+      readyCheck.getUserUntilTimes().remove(botUserId);
+
+      final ScheduledFuture<?> untilFuture =
+          readyCheck.getScheduledUntilFutures().remove(botUserId);
+      if (untilFuture != null && !untilFuture.isDone()) {
+        untilFuture.cancel(false);
+      }
+    }
+
+    return true;
   }
 
   private static boolean checkAndReadyUsersInVoice(

@@ -32,7 +32,7 @@ public final class ReadyCheckManager {
   private static final Logger logger = LoggerFactory.getLogger(ReadyCheckManager.class);
   private static final Map<String, ReadyCheck> activeReadyChecks = new ConcurrentHashMap<>();
   private static final Map<String, Boolean> mentionPreferences = new ConcurrentHashMap<>();
-  private static final long TWO_HOURS_MS = TimeUnit.HOURS.toMillis(2);
+  private static final long EIGHT_HOURS_MS = TimeUnit.HOURS.toMillis(8);
   private static JDA globalJDA;
 
   static {
@@ -47,7 +47,6 @@ public final class ReadyCheckManager {
     COMPLETED
   }
 
-  // Core JDA and lifecycle methods
   public static void setJDA(final JDA jda) {
     globalJDA = jda;
   }
@@ -56,7 +55,6 @@ public final class ReadyCheckManager {
     return globalJDA;
   }
 
-  // Active ready check management
   public static Map<String, ReadyCheck> getActiveReadyChecks() {
     return activeReadyChecks;
   }
@@ -75,7 +73,6 @@ public final class ReadyCheckManager {
     logger.info("Added recovered ready check: {}", readyCheckId);
   }
 
-  // Ready check creation methods
   public static ReadyCheck createRecoveredReadyCheck(
       final String readyCheckId,
       final String guildId,
@@ -119,7 +116,6 @@ public final class ReadyCheckManager {
         guildId, channelId, initiatorId, roleId, targetMembers, "**Ready Check** for role members");
   }
 
-  // Mention preferences
   public static void setMentionPreference(final String readyCheckId, final boolean mentionPeople) {
     mentionPreferences.put(readyCheckId, mentionPeople);
   }
@@ -128,7 +124,6 @@ public final class ReadyCheckManager {
     return mentionPreferences.getOrDefault(readyCheckId, true);
   }
 
-  // Ready check state management
   public static boolean markUserReady(final String readyCheckId, final String userId) {
     final ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
     if (readyCheck == null) {
@@ -184,7 +179,6 @@ public final class ReadyCheckManager {
     }
   }
 
-  // Scheduling methods
   public static void scheduleReadyAt(
       final String readyCheckId, final String timeInput, final String userId, final JDA jda) {
     final ReadyCheck readyCheck = getReadyCheckOrThrow(readyCheckId);
@@ -203,7 +197,6 @@ public final class ReadyCheckManager {
     return ReadyCheckScheduler.scheduleReadyUntil(readyCheck, timeInput, userId, jda);
   }
 
-  // Status checking methods
   public static boolean checkIfAllReady(final String readyCheckId) {
     final ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
     return readyCheck != null && allNonPassedReady(readyCheck);
@@ -214,7 +207,20 @@ public final class ReadyCheckManager {
     return readyCheck != null && !allNonPassedReady(readyCheck);
   }
 
-  // Finding existing ready checks
+  public static String findActiveReadyCheckInChannel(final String guildId, final String channelId) {
+    final long eightHoursAgo = System.currentTimeMillis() - EIGHT_HOURS_MS;
+
+    return activeReadyChecks.values().stream()
+        .filter(readyCheck -> readyCheck.getGuildId().equals(guildId))
+        .filter(readyCheck -> readyCheck.getChannelId().equals(channelId))
+        .filter(readyCheck -> readyCheck.getCreatedTime() >= eightHoursAgo)
+        .filter(readyCheck -> readyCheck.getStatus() == ReadyCheckStatus.ACTIVE)
+        .filter(readyCheck -> isReadyCheckOngoing(readyCheck.getId()))
+        .map(ReadyCheck::getId)
+        .findFirst()
+        .orElse(null);
+  }
+
   public static String findExistingReadyCheck(
       final String guildId, final SavedReadyCheck savedCheck, final String initiatorId) {
     return activeReadyChecks.values().stream()
@@ -233,11 +239,11 @@ public final class ReadyCheckManager {
   }
 
   public static String findActiveReadyCheckForUser(final String guildId, final String userId) {
-    final long twoHoursAgo = System.currentTimeMillis() - TWO_HOURS_MS;
+    final long eightHoursAgo = System.currentTimeMillis() - EIGHT_HOURS_MS;
 
     return activeReadyChecks.values().stream()
         .filter(readyCheck -> readyCheck.getGuildId().equals(guildId))
-        .filter(readyCheck -> readyCheck.getCreatedTime() >= twoHoursAgo)
+        .filter(readyCheck -> readyCheck.getCreatedTime() >= eightHoursAgo)
         .filter(readyCheck -> readyCheck.getStatus() == ReadyCheckStatus.ACTIVE)
         .filter(readyCheck -> ReadyCheckUtils.userCanEngageWithReadyCheck(readyCheck, userId))
         .map(ReadyCheck::getId)
@@ -245,7 +251,25 @@ public final class ReadyCheckManager {
         .orElse(null);
   }
 
-  // Response creation methods
+  public static void refreshReadyCheckMessage(final String readyCheckId, final JDA jda) {
+    final ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
+    if (readyCheck == null || readyCheck.getMessageId() == null) return;
+
+    final Guild guild = jda.getGuildById(readyCheck.getGuildId());
+    final TextChannel channel =
+        ReadyCheckUtils.getChannelFromGuild(guild, readyCheck.getChannelId());
+    if (channel == null) return;
+
+    channel
+        .retrieveMessageById(readyCheck.getMessageId())
+        .queue(
+            oldMessage -> {
+              oldMessage.delete().queue(null, error -> {});
+              sendRefreshedReadyCheck(readyCheck, channel, readyCheckId);
+            },
+            error -> sendRefreshedReadyCheck(readyCheck, channel, readyCheckId));
+  }
+
   public static void createReadyCheckResponse(
       final Object event,
       final String readyCheckId,
@@ -300,7 +324,6 @@ public final class ReadyCheckManager {
         .queue(message -> readyCheck.setMessageId(message.getId()));
   }
 
-  // Embed updating
   public static void updateReadyCheckEmbed(final String readyCheckId, final JDA jda) {
     final ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
     if (readyCheck == null || readyCheck.getMessageId() == null) return;
@@ -342,10 +365,10 @@ public final class ReadyCheckManager {
         ReadyCheckUtils.getChannelFromGuild(guild, readyCheck.getChannelId());
     if (channel == null) return;
 
-    final EmbedBuilder embed =
+    final var embed =
         ReadyCheckEmbedBuilder.buildReadyCheckEmbed(readyCheck, jda, readyCheck.getDescription());
-    final List<Button> mainButtons = ReadyCheckUtils.createMainButtons(readyCheckId);
-    final List<Button> saveButton = ReadyCheckUtils.createSaveButton(readyCheckId);
+    final var mainButtons = ReadyCheckUtils.createMainButtons(readyCheckId);
+    final var saveButton = ReadyCheckUtils.createSaveButton(readyCheckId);
     final String mentions = ReadyCheckEmbedBuilder.createMentions(readyCheck, jda, readyCheckId);
 
     channel
@@ -355,7 +378,6 @@ public final class ReadyCheckManager {
         .queue(message -> readyCheck.setMessageId(message.getId()));
   }
 
-  // Persistence methods
   public static void saveReadyCheck(final String readyCheckId) {
     final ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
     if (readyCheck == null) {
@@ -371,7 +393,6 @@ public final class ReadyCheckManager {
     return ReadyCheckPersistence.getSavedReadyChecks(guildId);
   }
 
-  // Utility methods for recovery
   public static EmbedBuilder buildReadyCheckEmbedForRecovery(
       final ReadyCheck readyCheck, final JDA jda, final String description) {
     return ReadyCheckEmbedBuilder.buildReadyCheckEmbed(readyCheck, jda, description);
@@ -384,7 +405,6 @@ public final class ReadyCheckManager {
     }
   }
 
-  // Private helper methods
   private static void scheduleRecovery() {
     ReadyCheckScheduler.getScheduler()
         .schedule(
@@ -397,6 +417,49 @@ public final class ReadyCheckManager {
             },
             10,
             TimeUnit.SECONDS);
+  }
+
+  private static void scheduleCompletionMessageDeletion(
+      final TextChannel channel, final String messageId) {
+    ReadyCheckScheduler.getScheduler()
+        .schedule(
+            () -> {
+              channel
+                  .retrieveMessageById(messageId)
+                  .queue(
+                      message ->
+                          message
+                              .delete()
+                              .queue(
+                                  success ->
+                                      logger.debug(
+                                          "Auto-deleted completion message: {}", messageId),
+                                  error ->
+                                      logger.debug(
+                                          "Failed to auto-delete completion message: {}",
+                                          error.getMessage())),
+                      error ->
+                          logger.debug(
+                              "Completion message {} already deleted or not found", messageId));
+            },
+            30,
+            TimeUnit.MINUTES);
+  }
+
+  private static void sendRefreshedReadyCheck(
+      final ReadyCheck readyCheck, final TextChannel channel, final String readyCheckId) {
+
+    final EmbedBuilder embed =
+        ReadyCheckEmbedBuilder.buildReadyCheckEmbed(
+            readyCheck, globalJDA, readyCheck.getDescription());
+    final List<Button> mainButtons = ReadyCheckUtils.createMainButtons(readyCheckId);
+    final List<Button> saveButton = ReadyCheckUtils.createSaveButton(readyCheckId);
+
+    channel
+        .sendMessage("")
+        .setEmbeds(embed.build())
+        .setComponents(ActionRow.of(mainButtons), ActionRow.of(saveButton))
+        .queue(newMessage -> readyCheck.setMessageId(newMessage.getId()));
   }
 
   private static ReadyCheck getReadyCheckOrThrow(final String readyCheckId) {
@@ -637,7 +700,11 @@ public final class ReadyCheckManager {
     channel
         .sendMessage(mentions)
         .setEmbeds(summaryEmbed.build())
-        .queue(newMessage -> readyCheck.setMessageId(newMessage.getId()));
+        .queue(
+            newMessage -> {
+              readyCheck.setCompletionMessageId(newMessage.getId());
+              scheduleCompletionMessageDeletion(channel, newMessage.getId());
+            });
   }
 
   private static String createReadyCheck(
@@ -668,7 +735,6 @@ public final class ReadyCheckManager {
         .allMatch(userId -> readyCheck.getReadyUsers().contains(userId));
   }
 
-  // Inner classes
   public record ScheduledUser(long readyTimestamp, ScheduledFuture<?> reminderFuture) {
     public void cancel() {
       if (reminderFuture != null && !reminderFuture.isDone()) {
@@ -720,7 +786,6 @@ public final class ReadyCheckManager {
       this.scheduledUntilFutures = new HashMap<>();
     }
 
-    // Getters and setters
     public String getId() {
       return id;
     }

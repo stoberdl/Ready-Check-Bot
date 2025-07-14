@@ -42,6 +42,7 @@ public final class MessageListener extends ListenerAdapter {
   private void handleRMessage(
       final MessageReceivedEvent event, final String timeType, final String timeValue) {
     final String guildId = event.getGuild().getId();
+    final String channelId = event.getChannel().getId();
     final Member initiator = event.getMember();
     if (initiator == null) {
       logger.warn("Initiator member is null for guild: {}", guildId);
@@ -49,10 +50,20 @@ public final class MessageListener extends ListenerAdapter {
     }
 
     final String userId = initiator.getId();
-    final String existingCheckId = ReadyCheckManager.findActiveReadyCheckForUser(guildId, userId);
+
+    String existingCheckId = ReadyCheckManager.findActiveReadyCheckForUser(guildId, userId);
 
     if (existingCheckId != null) {
-      handleExistingReadyCheck(existingCheckId, userId, timeType, timeValue, event);
+      handleExistingReadyCheck(existingCheckId, userId, timeType, timeValue, event, false);
+      return;
+    }
+
+    existingCheckId = ReadyCheckManager.findActiveReadyCheckInChannel(guildId, channelId);
+
+    if (existingCheckId != null) {
+      ReadyCheckManager.ensureUserInReadyCheck(existingCheckId, userId);
+      ReadyCheckManager.refreshReadyCheckMessage(existingCheckId, event.getJDA());
+      handleExistingReadyCheck(existingCheckId, userId, timeType, timeValue, event, true);
       return;
     }
 
@@ -72,7 +83,8 @@ public final class MessageListener extends ListenerAdapter {
       final String userId,
       final String timeType,
       final String timeValue,
-      final MessageReceivedEvent event) {
+      final MessageReceivedEvent event,
+      final boolean isRefreshed) {
     try {
       ReadyCheckManager.unmarkUserPassed(readyCheckId, userId);
 
@@ -85,7 +97,9 @@ public final class MessageListener extends ListenerAdapter {
             readyCheckId, timeValue.trim(), userId, event.getJDA());
       }
 
-      ReadyCheckManager.updateReadyCheckEmbed(readyCheckId, event.getJDA());
+      if (!isRefreshed) {
+        ReadyCheckManager.updateReadyCheckEmbed(readyCheckId, event.getJDA());
+      }
 
       if (ReadyCheckManager.checkIfAllReady(readyCheckId)) {
         ReadyCheckManager.notifyAllReady(readyCheckId, event.getJDA());
