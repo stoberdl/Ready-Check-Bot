@@ -18,17 +18,17 @@ public final class ReadyCheckBot {
   private static final Logger logger = LoggerFactory.getLogger(ReadyCheckBot.class);
   private static JDA jda;
 
-  private ReadyCheckBot() {
-    // Private constructor to hide implicit public one
-  }
+  private ReadyCheckBot() {}
 
   public static void main(final String[] args) {
     final String botToken = BotConfig.getBotToken();
 
     if (botToken.isEmpty()) {
-      logger.error("Bot token not found in config.properties. Please provide a valid token.");
+      logger.error("Bot token not found in environment. Please provide a valid token.");
       return;
     }
+
+    validateSupabaseConfig();
 
     try {
       jda =
@@ -55,6 +55,23 @@ public final class ReadyCheckBot {
     } catch (final Exception e) {
       logger.error("Error starting the bot: ", e);
     }
+  }
+
+  private static void validateSupabaseConfig() {
+    String supabaseUrl = System.getenv("SUPABASE_URL");
+    String supabaseKey = System.getenv("SUPABASE_KEY");
+
+    if (supabaseUrl == null || supabaseUrl.isEmpty()) {
+      logger.error("SUPABASE_URL environment variable not set!");
+      throw new IllegalStateException("Supabase URL not configured");
+    }
+
+    if (supabaseKey == null || supabaseKey.isEmpty()) {
+      logger.error("SUPABASE_KEY environment variable not set!");
+      throw new IllegalStateException("Supabase key not configured");
+    }
+
+    logger.info("Supabase configuration validated");
   }
 
   private static void registerSlashCommands() {

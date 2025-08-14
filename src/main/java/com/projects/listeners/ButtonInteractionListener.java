@@ -14,7 +14,6 @@ import net.dv8tion.jda.api.interactions.modals.Modal;
 public final class ButtonInteractionListener extends ListenerAdapter {
   private static final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
   private static final String READY_AT_PREFIX = "ready_at_";
-  private static final String READY_UNTIL_PREFIX = "ready_until_";
   private static final String TOGGLE_READY_PREFIX = "toggle_ready_";
   private static final String PASS_PREFIX = "pass_";
   private static final String SAVE_READY_PREFIX = "save_ready_";
@@ -29,8 +28,6 @@ public final class ButtonInteractionListener extends ListenerAdapter {
       handlePassButton(event, extractReadyCheckId(buttonId, PASS_PREFIX));
     } else if (buttonId.startsWith(READY_AT_PREFIX)) {
       handleReadyAtButton(event, extractReadyCheckId(buttonId, READY_AT_PREFIX));
-    } else if (buttonId.startsWith(READY_UNTIL_PREFIX)) {
-      handleReadyUntilButton(event, extractReadyCheckId(buttonId, READY_UNTIL_PREFIX));
     } else if (buttonId.startsWith(SAVE_READY_PREFIX)) {
       handleSaveReadyButton(event, extractReadyCheckId(buttonId, SAVE_READY_PREFIX));
     }
@@ -81,20 +78,6 @@ public final class ButtonInteractionListener extends ListenerAdapter {
     final Modal modal =
         createModal(
             READY_AT_PREFIX + readyCheckId + "_" + userId, "Ready At Specific Time", timeInput);
-    event.replyModal(modal).queue();
-  }
-
-  private void handleReadyUntilButton(
-      final ButtonInteractionEvent event, final String readyCheckId) {
-    final String userId = event.getUser().getId();
-    ReadyCheckManager.unmarkUserPassed(readyCheckId, userId);
-
-    final TextInput timeInput = createTimeInput("Ready until what time?");
-    final Modal modal =
-        createModal(
-            READY_UNTIL_PREFIX + readyCheckId + "_" + userId,
-            "Ready Until Specific Time",
-            timeInput);
     event.replyModal(modal).queue();
   }
 

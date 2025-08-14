@@ -94,10 +94,6 @@ public class ReadyCheckEmbedBuilder {
 
   private static String buildReadyStatus(
       ReadyCheckManager.ReadyCheck readyCheck, String userId, String displayName) {
-    if (hasUntilTime(readyCheck, userId)) {
-      return buildReadyUntilStatus(readyCheck, userId, displayName);
-    }
-
     if (hasTimer(readyCheck, userId)) {
       return buildReadyWithTimerStatus(readyCheck, userId, displayName);
     }
@@ -105,18 +101,8 @@ public class ReadyCheckEmbedBuilder {
     return "✅ " + displayName;
   }
 
-  private static boolean hasUntilTime(ReadyCheckManager.ReadyCheck readyCheck, String userId) {
-    return readyCheck.getUserUntilTimes().containsKey(userId);
-  }
-
   private static boolean hasTimer(ReadyCheckManager.ReadyCheck readyCheck, String userId) {
     return readyCheck.getUserTimers().containsKey(userId);
-  }
-
-  private static String buildReadyUntilStatus(
-      ReadyCheckManager.ReadyCheck readyCheck, String userId, String displayName) {
-    String untilTime = readyCheck.getUserUntilTimes().get(userId);
-    return "✅ " + displayName + " (until " + untilTime + ")";
   }
 
   private static String buildReadyWithTimerStatus(
@@ -203,7 +189,6 @@ public class ReadyCheckEmbedBuilder {
         .filter(userId -> !readyCheck.getReadyUsers().contains(userId))
         .filter(userId -> !readyCheck.getPassedUsers().contains(userId))
         .filter(userId -> !readyCheck.getScheduledUsers().containsKey(userId))
-        .filter(userId -> !readyCheck.getUserUntilTimes().containsKey(userId))
         .map(
             userId -> {
               Member member = guild.getMemberById(userId);

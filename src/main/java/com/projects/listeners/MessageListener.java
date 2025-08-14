@@ -3,7 +3,6 @@ package com.projects.listeners;
 import com.projects.readycheck.ReadyCheckManager;
 import java.util.List;
 import java.util.Objects;
-import java.util.Random;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.dv8tion.jda.api.entities.Member;
@@ -15,7 +14,6 @@ import org.slf4j.LoggerFactory;
 
 public final class MessageListener extends ListenerAdapter {
   private static final Logger logger = LoggerFactory.getLogger(MessageListener.class);
-  private static final Random random = new Random();
 
   private static final Pattern R_PATTERN =
       Pattern.compile("^[rR](?:\\s+(in|at)\\s+([\\w:.,\\s]{1,50}))?$");
@@ -29,11 +27,6 @@ public final class MessageListener extends ListenerAdapter {
 
     final String messageContent = event.getMessage().getContentRaw().trim();
 
-    if (isMentioningBot(event)) {
-      handleBotMention(event);
-      return;
-    }
-
     if (messageContent.length() > MAX_MESSAGE_LENGTH) {
       return;
     }
@@ -43,29 +36,6 @@ public final class MessageListener extends ListenerAdapter {
       final String timeType = matcher.group(1);
       final String timeValue = matcher.group(2);
       handleRMessage(event, timeType, timeValue);
-    }
-  }
-
-  private boolean isMentioningBot(final MessageReceivedEvent event) {
-    return event.getMessage().getMentions().isMentioned(event.getJDA().getSelfUser());
-  }
-
-  private void handleBotMention(final MessageReceivedEvent event) {
-    final String response = getRandomResponse();
-    event.getChannel().sendMessage(response).queue();
-  }
-
-  private String getRandomResponse() {
-    final int roll = random.nextInt(100);
-
-    if (roll < 70) {
-      return "wat";
-    } else if (roll < 90) {
-      return "idk";
-    } else if (roll < 95) {
-      return "cs?";
-    } else {
-      return "ARAM";
     }
   }
 

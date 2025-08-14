@@ -29,7 +29,6 @@ public final class ReadyCheckUtils {
     return Arrays.asList(
         Button.success("toggle_ready_" + readyCheckId, "Toggle Ready"),
         Button.primary("ready_at_" + readyCheckId, "Ready At..."),
-        Button.primary("ready_until_" + readyCheckId, "Ready Until..."),
         Button.danger("pass_" + readyCheckId, "Pass"));
   }
 

@@ -85,39 +85,6 @@ public final class ReadyCheckScheduler {
     return targetTime.format(TIME_FORMATTER);
   }
 
-  public static String scheduleReadyUntil(
-      final ReadyCheckManager.ReadyCheck readyCheck,
-      final String timeInput,
-      final String userId,
-      final JDA jda) {
-    final LocalTime targetTime = ReadyCheckTimeParser.parseTargetTime(timeInput);
-    ensureUserInTargets(readyCheck, userId);
-
-    final LocalDateTime now = LocalDateTime.now(SYSTEM_TIMEZONE);
-    LocalDateTime target = LocalDateTime.of(now.toLocalDate(), targetTime);
-
-    if (!target.isAfter(now)) {
-      target = target.plusDays(1);
-    }
-
-    final Duration delay = Duration.between(now, target);
-    long delayMinutes = delay.toMinutes();
-    if (delay.toSecondsPart() > 0) {
-      delayMinutes++;
-    }
-
-    final ScheduledFuture<?> untilFuture =
-        scheduler.schedule(
-            () -> autoPassUser(readyCheck, userId, jda), delayMinutes, TimeUnit.MINUTES);
-
-    readyCheck.getScheduledUntilFutures().put(userId, untilFuture);
-    final String discordTimestamp =
-        "<t:" + target.atZone(SYSTEM_TIMEZONE).toInstant().getEpochSecond() + ":t>";
-    readyCheck.getUserUntilTimes().put(userId, discordTimestamp);
-
-    return discordTimestamp;
-  }
-
   public static void startPeriodicUpdater() {
     scheduler.scheduleWithFixedDelay(
         () -> {
@@ -149,11 +116,6 @@ public final class ReadyCheckScheduler {
         readyCheck.getScheduledUsers().remove(userId);
     if (existingScheduled != null) {
       existingScheduled.cancel();
-    }
-
-    final ScheduledFuture<?> existingUntil = readyCheck.getScheduledUntilFutures().remove(userId);
-    if (existingUntil != null && !existingUntil.isDone()) {
-      existingUntil.cancel(false);
     }
   }
 
@@ -205,13 +167,6 @@ public final class ReadyCheckScheduler {
       readyCheck.getPassedUsers().remove(botUserId);
       readyCheck.getScheduledUsers().remove(botUserId);
       readyCheck.getUserTimers().remove(botUserId);
-      readyCheck.getUserUntilTimes().remove(botUserId);
-
-      final ScheduledFuture<?> untilFuture =
-          readyCheck.getScheduledUntilFutures().remove(botUserId);
-      if (untilFuture != null && !untilFuture.isDone()) {
-        untilFuture.cancel(false);
-      }
     }
 
     return true;
@@ -266,7 +221,7 @@ public final class ReadyCheckScheduler {
     readyCheck.getScheduledUsers().put(userId, scheduledUser);
   }
 
-  private static void sendReadyReminder(
+  public static void sendReadyReminder(
       final String readyCheckId, final String userId, final JDA jda) {
     final ReadyCheckManager.ReadyCheck readyCheck =
         ReadyCheckManager.getActiveReadyCheck(readyCheckId);
@@ -356,15 +311,6 @@ public final class ReadyCheckScheduler {
         .queue(newMessage -> readyCheck.setMessageId(newMessage.getId()));
   }
 
-  private static void autoPassUser(
-      final ReadyCheckManager.ReadyCheck readyCheck, final String userId, final JDA jda) {
-    readyCheck.getPassedUsers().add(userId);
-    readyCheck.getReadyUsers().remove(userId);
-    readyCheck.getUserUntilTimes().remove(userId);
-
-    ReadyCheckManager.updateReadyCheckEmbed(readyCheck.getId(), jda);
-  }
-
   private static void ensureUserInTargets(
       final ReadyCheckManager.ReadyCheck readyCheck, final String userId) {
     readyCheck.getTargetUsers().add(userId);
@@ -387,6 +333,5 @@ public final class ReadyCheckScheduler {
     readyCheck.getReadyUsers().add(userId);
     cancelExistingScheduledUser(readyCheck, userId);
     readyCheck.getUserTimers().remove(userId);
-    readyCheck.getUserUntilTimes().remove(userId);
   }
 }

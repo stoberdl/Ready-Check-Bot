@@ -4,7 +4,6 @@ import com.projects.readycheck.utils.ReadyCheckUtils;
 import com.projects.readycheck.utils.VoiceChannelMentionFilter;
 import java.awt.Color;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -59,42 +58,8 @@ public final class ReadyCheckManager {
     return activeReadyChecks;
   }
 
-  public static boolean hasActiveReadyCheck(final String readyCheckId) {
-    return activeReadyChecks.containsKey(readyCheckId);
-  }
-
   public static ReadyCheck getActiveReadyCheck(final String readyCheckId) {
     return activeReadyChecks.get(readyCheckId);
-  }
-
-  public static void addRecoveredReadyCheck(
-      final String readyCheckId, final ReadyCheck readyCheck) {
-    activeReadyChecks.put(readyCheckId, readyCheck);
-    logger.info("Added recovered ready check: {}", readyCheckId);
-  }
-
-  public static ReadyCheck createRecoveredReadyCheck(
-      final String readyCheckId,
-      final String guildId,
-      final String channelId,
-      final String initiatorId,
-      final String roleId,
-      final Set<String> targetUsers,
-      final Set<String> readyUsers,
-      final Set<String> passedUsers,
-      final String messageId) {
-
-    final ReadyCheck recoveredCheck =
-        new ReadyCheck(
-            readyCheckId, guildId, channelId, initiatorId, roleId, new ArrayList<>(targetUsers));
-
-    recoveredCheck.getTargetUsers().clear();
-    recoveredCheck.getTargetUsers().addAll(targetUsers);
-    recoveredCheck.getReadyUsers().addAll(readyUsers);
-    recoveredCheck.getPassedUsers().addAll(passedUsers);
-    recoveredCheck.setMessageId(messageId);
-
-    return recoveredCheck;
   }
 
   public static String createUserReadyCheck(
@@ -124,19 +89,20 @@ public final class ReadyCheckManager {
     return mentionPreferences.getOrDefault(readyCheckId, true);
   }
 
-  public static boolean markUserReady(final String readyCheckId, final String userId) {
+  public static void markUserReady(final String readyCheckId, final String userId) {
     final ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
     if (readyCheck == null) {
       logger.warn(
           "Attempted to mark user {} ready for non-existent ready check: {}", userId, readyCheckId);
-      return false;
+      return;
     }
 
     ReadyCheckScheduler.cancelExistingScheduledUser(readyCheck, userId);
     readyCheck.getUserTimers().remove(userId);
     readyCheck.getReadyUsers().add(userId);
+    readyCheck.getPassedUsers().remove(userId);
 
-    return checkAndUpdateCompletionStatus(readyCheck, readyCheckId);
+    checkAndUpdateCompletionStatus(readyCheck, readyCheckId);
   }
 
   public static boolean toggleUserReady(final String readyCheckId, final String userId) {
@@ -162,7 +128,6 @@ public final class ReadyCheckManager {
     readyCheck.getPassedUsers().add(userId);
     readyCheck.getReadyUsers().remove(userId);
     readyCheck.getScheduledUsers().remove(userId);
-    readyCheck.getUserUntilTimes().remove(userId);
   }
 
   public static void unmarkUserPassed(final String readyCheckId, final String userId) {
@@ -191,12 +156,6 @@ public final class ReadyCheckManager {
     return ReadyCheckScheduler.scheduleReadyAtSmart(readyCheck, timeInput, userId, jda);
   }
 
-  public static String scheduleReadyUntil(
-      final String readyCheckId, final String timeInput, final String userId, final JDA jda) {
-    final ReadyCheck readyCheck = getReadyCheckOrThrow(readyCheckId);
-    return ReadyCheckScheduler.scheduleReadyUntil(readyCheck, timeInput, userId, jda);
-  }
-
   public static boolean checkIfAllReady(final String readyCheckId) {
     final ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
     return readyCheck != null && allNonPassedReady(readyCheck);
@@ -215,8 +174,8 @@ public final class ReadyCheckManager {
         .filter(readyCheck -> readyCheck.getChannelId().equals(channelId))
         .filter(readyCheck -> readyCheck.getCreatedTime() >= eightHoursAgo)
         .filter(readyCheck -> readyCheck.getStatus() == ReadyCheckStatus.ACTIVE)
-        .filter(readyCheck -> isReadyCheckOngoing(readyCheck.getId()))
         .map(ReadyCheck::getId)
+        .filter(ReadyCheckManager::isReadyCheckOngoing)
         .findFirst()
         .orElse(null);
   }
@@ -321,7 +280,11 @@ public final class ReadyCheckManager {
         .sendMessage(mentions)
         .setEmbeds(embed.build())
         .setComponents(ActionRow.of(mainButtons), ActionRow.of(saveButton))
-        .queue(message -> readyCheck.setMessageId(message.getId()));
+        .queue(
+            message -> {
+              readyCheck.setMessageId(message.getId());
+              SupabasePersistence.saveActiveReadyCheck(readyCheck);
+            });
   }
 
   public static void updateReadyCheckEmbed(final String readyCheckId, final JDA jda) {
@@ -337,6 +300,7 @@ public final class ReadyCheckManager {
     handleStatusTransition(readyCheck, channel);
     ReadyCheckScheduler.cleanupExpiredScheduledUsers(readyCheck);
     updateMessage(readyCheck, channel, readyCheckId);
+    SupabasePersistence.saveActiveReadyCheck(readyCheck);
   }
 
   public static void notifyAllReady(final String readyCheckId, final JDA jda) {
@@ -354,6 +318,8 @@ public final class ReadyCheckManager {
     final String readyUserMentions = createReadyUserMentions(readyCheck, allUsers, guild);
 
     replaceReadyCheckWithSummary(readyCheckId, jda, readyUserNames, readyUserMentions);
+    SupabasePersistence.deleteActiveReadyCheck(readyCheckId);
+    activeReadyChecks.remove(readyCheckId);
   }
 
   public static void resendExistingReadyCheck(final String readyCheckId, final JDA jda) {
@@ -386,16 +352,11 @@ public final class ReadyCheckManager {
     }
 
     final boolean mentionPeople = getMentionPreference(readyCheckId);
-    ReadyCheckPersistence.saveReadyCheck(readyCheck, mentionPeople);
+    SupabasePersistence.saveReadyCheck(readyCheck, mentionPeople);
   }
 
   public static List<SavedReadyCheck> getSavedReadyChecks(final String guildId) {
-    return ReadyCheckPersistence.getSavedReadyChecks(guildId);
-  }
-
-  public static EmbedBuilder buildReadyCheckEmbedForRecovery(
-      final ReadyCheck readyCheck, final JDA jda, final String description) {
-    return ReadyCheckEmbedBuilder.buildReadyCheckEmbed(readyCheck, jda, description);
+    return SupabasePersistence.getSavedReadyChecks(guildId);
   }
 
   public static void setReadyCheckMessageId(final String readyCheckId, final String messageId) {
@@ -410,46 +371,128 @@ public final class ReadyCheckManager {
         .schedule(
             () -> {
               if (globalJDA != null) {
-                ReadyCheckRecoveryManager.recoverReadyChecksFromMessages(globalJDA);
-                com.projects.recovery.MentionRecoveryManager.recoverMissedMentions(globalJDA);
-              } else {
-                logger.warn("JDA not ready for recovery, skipping message recovery");
+                List<ReadyCheck> recoveredChecks = SupabasePersistence.loadActiveReadyChecks();
+                for (ReadyCheck check : recoveredChecks) {
+                  activeReadyChecks.put(check.getId(), check);
+                  recreateScheduledReminders(check);
+                  recreateReadyCheckMessage(check);
+                }
+                logger.info(
+                    "Recovered {} active ready checks from database", recoveredChecks.size());
               }
             },
             10,
             TimeUnit.SECONDS);
   }
 
+  private static void recreateScheduledReminders(ReadyCheck readyCheck) {
+    if (readyCheck.getScheduledUsers().isEmpty()) return;
+
+    long currentTime = System.currentTimeMillis();
+    Map<String, ScheduledUser> newScheduledUsers = new HashMap<>();
+
+    for (Map.Entry<String, ScheduledUser> entry : readyCheck.getScheduledUsers().entrySet()) {
+      String userId = entry.getKey();
+      long readyTime = entry.getValue().readyTimestamp();
+
+      if (readyTime > currentTime) {
+        long delayMs = readyTime - currentTime;
+        long delayMinutes = Math.max(1, delayMs / 60000);
+
+        ScheduledFuture<?> reminderFuture =
+            ReadyCheckScheduler.getScheduler()
+                .schedule(
+                    () ->
+                        ReadyCheckScheduler.sendReadyReminder(
+                            readyCheck.getId(), userId, globalJDA),
+                    delayMinutes,
+                    TimeUnit.MINUTES);
+
+        newScheduledUsers.put(userId, new ScheduledUser(readyTime, reminderFuture));
+      } else {
+        readyCheck.getReadyUsers().add(userId);
+        readyCheck.getPassedUsers().remove(userId);
+      }
+    }
+
+    readyCheck.getScheduledUsers().clear();
+    readyCheck.getScheduledUsers().putAll(newScheduledUsers);
+  }
+
+  private static void recreateReadyCheckMessage(ReadyCheck readyCheck) {
+    Guild guild = globalJDA.getGuildById(readyCheck.getGuildId());
+    if (guild == null) return;
+
+    TextChannel channel = guild.getTextChannelById(readyCheck.getChannelId());
+    if (channel == null) return;
+
+    if (readyCheck.getMessageId() != null) {
+      channel
+          .retrieveMessageById(readyCheck.getMessageId())
+          .queue(oldMessage -> oldMessage.delete().queue(null, error -> {}), error -> {});
+    }
+
+    EmbedBuilder embed =
+        ReadyCheckEmbedBuilder.buildReadyCheckEmbed(
+            readyCheck, globalJDA, readyCheck.getDescription());
+    List<Button> mainButtons = ReadyCheckUtils.createMainButtons(readyCheck.getId());
+    List<Button> saveButton = ReadyCheckUtils.createSaveButton(readyCheck.getId());
+
+    channel
+        .sendMessage("")
+        .setEmbeds(embed.build())
+        .setComponents(ActionRow.of(mainButtons), ActionRow.of(saveButton))
+        .queue(newMessage -> readyCheck.setMessageId(newMessage.getId()));
+  }
+
+  private static void updateMessage(
+      ReadyCheck readyCheck, TextChannel channel, String readyCheckId) {
+    channel
+        .retrieveMessageById(readyCheck.getMessageId())
+        .queue(
+            message -> {
+              final EmbedBuilder embed =
+                  ReadyCheckEmbedBuilder.buildReadyCheckEmbed(
+                      readyCheck, globalJDA, readyCheck.getDescription());
+              final List<Button> mainButtons = ReadyCheckUtils.createMainButtons(readyCheckId);
+              final List<Button> saveButton = ReadyCheckUtils.createSaveButton(readyCheckId);
+
+              message
+                  .editMessageEmbeds(embed.build())
+                  .setComponents(ActionRow.of(mainButtons), ActionRow.of(saveButton))
+                  .queue();
+            },
+            error -> {});
+  }
+
   private static void scheduleCompletionMessageDeletion(
       final TextChannel channel, final String messageId) {
     ReadyCheckScheduler.getScheduler()
         .schedule(
-            () -> {
-              channel
-                  .retrieveMessageById(messageId)
-                  .queue(
-                      message ->
-                          message
-                              .delete()
-                              .queue(
-                                  success ->
-                                      logger.debug(
-                                          "Auto-deleted completion message: {}", messageId),
-                                  error ->
-                                      logger.debug(
-                                          "Failed to auto-delete completion message: {}",
-                                          error.getMessage())),
-                      error ->
-                          logger.debug(
-                              "Completion message {} already deleted or not found", messageId));
-            },
+            () ->
+                channel
+                    .retrieveMessageById(messageId)
+                    .queue(
+                        message ->
+                            message
+                                .delete()
+                                .queue(
+                                    success ->
+                                        logger.debug(
+                                            "Auto-deleted completion message: {}", messageId),
+                                    error ->
+                                        logger.debug(
+                                            "Failed to auto-delete completion message: {}",
+                                            error.getMessage())),
+                        error ->
+                            logger.debug(
+                                "Completion message {} already deleted or not found", messageId)),
             30,
             TimeUnit.MINUTES);
   }
 
   private static void sendRefreshedReadyCheck(
       final ReadyCheck readyCheck, final TextChannel channel, final String readyCheckId) {
-
     final EmbedBuilder embed =
         ReadyCheckEmbedBuilder.buildReadyCheckEmbed(
             readyCheck, globalJDA, readyCheck.getDescription());
@@ -471,21 +514,19 @@ public final class ReadyCheckManager {
     return readyCheck;
   }
 
-  private static boolean checkAndUpdateCompletionStatus(
+  private static void checkAndUpdateCompletionStatus(
       final ReadyCheck readyCheck, final String readyCheckId) {
     final boolean allReady = readyCheck.getReadyUsers().containsAll(readyCheck.getTargetUsers());
     if (allReady && readyCheck.getStatus() == ReadyCheckStatus.ACTIVE) {
       readyCheck.setStatus(ReadyCheckStatus.COMPLETED);
       logger.info("Ready check completed: {}", readyCheckId);
     }
-    return allReady;
   }
 
   private static void markUserAsReady(final ReadyCheck readyCheck, final String userId) {
     ReadyCheckScheduler.cancelExistingScheduledUser(readyCheck, userId);
     readyCheck.getReadyUsers().add(userId);
     readyCheck.getPassedUsers().remove(userId);
-    readyCheck.getUserUntilTimes().remove(userId);
   }
 
   private static String findExistingReadyCheckInternal(
@@ -559,7 +600,14 @@ public final class ReadyCheckManager {
             response ->
                 response
                     .retrieveOriginal()
-                    .queue(message -> setReadyCheckMessageId(readyCheckId, message.getId())));
+                    .queue(
+                        message -> {
+                          setReadyCheckMessageId(readyCheckId, message.getId());
+                          ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
+                          if (readyCheck != null) {
+                            SupabasePersistence.saveActiveReadyCheck(readyCheck);
+                          }
+                        }));
   }
 
   private static void handleSelectMenuResponse(
@@ -578,7 +626,14 @@ public final class ReadyCheckManager {
             response ->
                 response
                     .retrieveOriginal()
-                    .queue(message -> setReadyCheckMessageId(readyCheckId, message.getId())));
+                    .queue(
+                        message -> {
+                          setReadyCheckMessageId(readyCheckId, message.getId());
+                          ReadyCheck readyCheck = activeReadyChecks.get(readyCheckId);
+                          if (readyCheck != null) {
+                            SupabasePersistence.saveActiveReadyCheck(readyCheck);
+                          }
+                        }));
   }
 
   private static void handleStatusTransition(
@@ -600,26 +655,6 @@ public final class ReadyCheckManager {
         .queue(message -> message.delete().queue(null, error -> {}), error -> {});
   }
 
-  private static void updateMessage(
-      final ReadyCheck readyCheck, final TextChannel channel, final String readyCheckId) {
-    channel
-        .retrieveMessageById(readyCheck.getMessageId())
-        .queue(
-            message -> {
-              final EmbedBuilder embed =
-                  ReadyCheckEmbedBuilder.buildReadyCheckEmbed(
-                      readyCheck, globalJDA, readyCheck.getDescription());
-              final List<Button> mainButtons = ReadyCheckUtils.createMainButtons(readyCheckId);
-              final List<Button> saveButton = ReadyCheckUtils.createSaveButton(readyCheckId);
-
-              message
-                  .editMessageEmbeds(embed.build())
-                  .setComponents(ActionRow.of(mainButtons), ActionRow.of(saveButton))
-                  .queue();
-            },
-            error -> {});
-  }
-
   private static List<String> getReadyUserNames(
       final ReadyCheck readyCheck, final Set<String> allUsers, final Guild guild) {
     return allUsers.stream()
@@ -636,7 +671,6 @@ public final class ReadyCheckManager {
 
   private static String createReadyUserMentions(
       final ReadyCheck readyCheck, final Set<String> allUsers, final Guild guild) {
-
     final Set<String> readyUsers =
         allUsers.stream()
             .filter(userId -> readyCheck.getReadyUsers().contains(userId))
@@ -753,9 +787,7 @@ public final class ReadyCheckManager {
     private final Set<String> targetUsers;
     private final Set<String> readyUsers;
     private final Map<String, ScheduledUser> scheduledUsers;
-    private final Map<String, ScheduledFuture<?>> scheduledUntilFutures;
     private final Map<String, Integer> userTimers;
-    private final Map<String, String> userUntilTimes;
     private final Set<String> passedUsers;
     private final long createdTime;
     private String messageId;
@@ -779,12 +811,10 @@ public final class ReadyCheckManager {
       this.targetUsers = new HashSet<>(targetUserIds);
       this.readyUsers = new HashSet<>();
       this.userTimers = new HashMap<>();
-      this.userUntilTimes = new HashMap<>();
       this.passedUsers = new HashSet<>();
       this.status = ReadyCheckStatus.ACTIVE;
       this.createdTime = System.currentTimeMillis();
       this.scheduledUsers = new HashMap<>();
-      this.scheduledUntilFutures = new HashMap<>();
     }
 
     public String getId() {
@@ -819,16 +849,8 @@ public final class ReadyCheckManager {
       return scheduledUsers;
     }
 
-    public Map<String, ScheduledFuture<?>> getScheduledUntilFutures() {
-      return scheduledUntilFutures;
-    }
-
     public Map<String, Integer> getUserTimers() {
       return userTimers;
-    }
-
-    public Map<String, String> getUserUntilTimes() {
-      return userUntilTimes;
     }
 
     public Set<String> getPassedUsers() {
