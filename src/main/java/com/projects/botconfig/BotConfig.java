@@ -1,4 +1,4 @@
-package com.projects.botConfig;
+package com.projects.botconfig;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

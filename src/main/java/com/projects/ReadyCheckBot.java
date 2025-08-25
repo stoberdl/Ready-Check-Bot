@@ -1,6 +1,6 @@
 package com.projects;
 
-import com.projects.botConfig.BotConfig;
+import com.projects.botconfig.BotConfig;
 import com.projects.listeners.*;
 import com.projects.readycheck.ReadyCheckManager;
 import java.util.EnumSet;

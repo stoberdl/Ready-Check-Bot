@@ -126,21 +126,37 @@ public final class ReadyCheckTimeParser {
   private static LocalTime parseExplicitAmPm(final String input) {
     final String normalizedInput = input.toUpperCase().replaceAll("\\s+", "");
 
-    if (normalizedInput.matches("\\d+(PM|AM)")) {
-      final int hour = Integer.parseInt(normalizedInput.replaceAll("\\D", ""));
-      final boolean isPM = normalizedInput.contains("PM");
+    if (isHourOnlyAmPm(normalizedInput)) {
+      return parseHourOnlyAmPm(normalizedInput);
+    }
 
-      if (hour >= 1 && hour <= 12) {
-        if (isPM) {
-          return LocalTime.of(hour == 12 ? 12 : hour + 12, 0);
-        } else {
-          return LocalTime.of(hour == 12 ? 0 : hour, 0);
-        }
-      } else {
-        throw new IllegalArgumentException("Hour must be between 1 and 12");
-      }
+    return parseTimeWithAmPm(normalizedInput);
+  }
+
+  private static boolean isHourOnlyAmPm(final String normalizedInput) {
+    return normalizedInput.matches("\\d+(PM|AM)");
+  }
+
+  private static LocalTime parseHourOnlyAmPm(final String normalizedInput) {
+    final int hour = Integer.parseInt(normalizedInput.replaceAll("\\D", ""));
+    final boolean isPM = normalizedInput.contains("PM");
+
+    validateAmPmHour(hour);
+
+    if (isPM) {
+      return LocalTime.of(hour == 12 ? 12 : hour + 12, 0);
     } else {
-      return LocalTime.parse(normalizedInput, DateTimeFormatter.ofPattern("h:mma"));
+      return LocalTime.of(hour == 12 ? 0 : hour, 0);
+    }
+  }
+
+  private static LocalTime parseTimeWithAmPm(final String normalizedInput) {
+    return LocalTime.parse(normalizedInput, DateTimeFormatter.ofPattern("h:mma"));
+  }
+
+  private static void validateAmPmHour(final int hour) {
+    if (hour < 1 || hour > 12) {
+      throw new IllegalArgumentException("Hour must be between 1 and 12");
     }
   }
 

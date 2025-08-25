@@ -4,6 +4,12 @@ target/
 !**/src/test/**/target/
 saved_ready_checks.json
 .env
+src/main/java/com/projects/gamer/
+Dockerfile.gamer
+docker-compose.gamer.yml
+pom.gamer.xml
+normal.png
+scary.jpg
 
 ### IntelliJ IDEA ###
 .idea/

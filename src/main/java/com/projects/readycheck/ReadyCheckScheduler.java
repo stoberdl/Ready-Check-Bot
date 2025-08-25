@@ -181,22 +181,28 @@ public final class ReadyCheckScheduler {
     final Set<String> allUsers = ReadyCheckUtils.getAllUsers(readyCheck);
 
     for (final String userId : allUsers) {
-      if (isUserAlreadyProcessed(readyCheck, userId)) {
+      if (!shouldProcessUser(readyCheck, userId, guild)) {
         continue;
       }
 
       final Member member = guild.getMemberById(userId);
-      if (member == null) {
-        continue;
-      }
-
-      if (shouldAutoReadyUserInVoice(member)) {
+      if (member != null && shouldAutoReadyUserInVoice(member)) {
         autoReadyUserInVoice(readyCheck, userId);
         anyChanges = true;
       }
     }
 
     return anyChanges;
+  }
+
+  private static boolean shouldProcessUser(
+      ReadyCheckManager.ReadyCheck readyCheck, String userId, Guild guild) {
+    if (isUserAlreadyProcessed(readyCheck, userId)) {
+      return false;
+    }
+
+    Member member = guild.getMemberById(userId);
+    return member != null;
   }
 
   private static void scheduleUserReady(
