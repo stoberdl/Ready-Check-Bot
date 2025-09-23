@@ -40,13 +40,17 @@ public final class ReadyCheckScheduler {
       final String timeInput,
       final String userId,
       final JDA jda) {
-    final long delayMinutes = ReadyCheckTimeParser.parseTimeInputAsMinutes(timeInput);
+    try {
+      final long delayMinutes = ReadyCheckTimeParser.parseTimeInputAsMinutes(timeInput);
 
-    ensureUserInTargets(readyCheck, userId);
-    cancelExistingScheduledUser(readyCheck, userId);
+      ensureUserInTargets(readyCheck, userId);
+      cancelExistingScheduledUser(readyCheck, userId);
 
-    final Instant targetTime = Instant.now().plus(Duration.ofMinutes(delayMinutes));
-    scheduleUserReady(readyCheck, userId, targetTime, jda);
+      final Instant targetTime = Instant.now().plus(Duration.ofMinutes(delayMinutes));
+      scheduleUserReady(readyCheck, userId, targetTime, jda);
+    } catch (final com.projects.readycheck.exceptions.InvalidTimeFormatException e) {
+      logger.error("Invalid time format for scheduling: {}", e.getMessage(), e);
+    }
   }
 
   public static String scheduleReadyAtSmart(

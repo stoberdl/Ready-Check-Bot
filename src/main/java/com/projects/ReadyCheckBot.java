@@ -1,6 +1,7 @@
 package com.projects;
 
 import com.projects.botconfig.BotConfig;
+import com.projects.botconfig.BotConfiguration;
 import com.projects.listeners.*;
 import com.projects.readycheck.ReadyCheckManager;
 import java.util.EnumSet;
@@ -58,20 +59,7 @@ public final class ReadyCheckBot {
   }
 
   private static void validateSupabaseConfig() {
-    String supabaseUrl = System.getenv("SUPABASE_URL");
-    String supabaseKey = System.getenv("SUPABASE_KEY");
-
-    if (supabaseUrl == null || supabaseUrl.isEmpty()) {
-      logger.error("SUPABASE_URL environment variable not set!");
-      throw new IllegalStateException("Supabase URL not configured");
-    }
-
-    if (supabaseKey == null || supabaseKey.isEmpty()) {
-      logger.error("SUPABASE_KEY environment variable not set!");
-      throw new IllegalStateException("Supabase key not configured");
-    }
-
-    logger.info("Supabase configuration validated");
+    BotConfiguration.getInstance().validateConfiguration();
   }
 
   private static void registerSlashCommands() {

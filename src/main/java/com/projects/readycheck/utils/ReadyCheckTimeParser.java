@@ -1,5 +1,6 @@
 package com.projects.readycheck.utils;
 
+import com.projects.readycheck.exceptions.InvalidTimeFormatException;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -9,7 +10,7 @@ public final class ReadyCheckTimeParser {
 
   private ReadyCheckTimeParser() {}
 
-  public static long parseTimeInputAsMinutes(final String timeInput) {
+  public static long parseTimeInputAsMinutes(final String timeInput) throws InvalidTimeFormatException {
     final String input = timeInput.trim();
 
     if (input.matches("\\d+")) {
@@ -17,11 +18,11 @@ public final class ReadyCheckTimeParser {
       if (minutes >= 1 && minutes <= 1440) {
         return minutes;
       } else {
-        throw new IllegalArgumentException("Minutes must be between 1 and 1440");
+        throw new InvalidTimeFormatException("Minutes must be between 1 and 1440");
       }
     }
 
-    throw new IllegalArgumentException(
+    throw new InvalidTimeFormatException(
         "For 'r in X', please use just the number of minutes (e.g., '5', '30')");
   }
 

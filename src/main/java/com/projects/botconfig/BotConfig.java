@@ -9,11 +9,6 @@ public final class BotConfig {
   private BotConfig() {}
 
   public static String getBotToken() {
-    final String token = System.getenv("DISCORD_BOT_TOKEN");
-    if (token == null || token.isEmpty()) {
-      logger.error("DISCORD_BOT_TOKEN environment variable not set!");
-      throw new IllegalStateException("Bot token not configured");
-    }
-    return token;
+    return BotConfiguration.getInstance().getDiscordBotToken();
   }
 }

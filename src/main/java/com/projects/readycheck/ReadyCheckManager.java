@@ -351,8 +351,12 @@ public final class ReadyCheckManager {
       return;
     }
 
-    final boolean mentionPeople = getMentionPreference(readyCheckId);
-    SupabasePersistence.saveReadyCheck(readyCheck, mentionPeople);
+    try {
+      final boolean mentionPeople = getMentionPreference(readyCheckId);
+      SupabasePersistence.saveReadyCheck(readyCheck, mentionPeople);
+    } catch (final com.projects.readycheck.exceptions.DatabasePersistenceException e) {
+      logger.error("Failed to save ready check configuration: {}", e.getMessage(), e);
+    }
   }
 
   public static List<SavedReadyCheck> getSavedReadyChecks(final String guildId) {

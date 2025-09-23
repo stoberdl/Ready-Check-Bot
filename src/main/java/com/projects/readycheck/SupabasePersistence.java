@@ -2,6 +2,8 @@ package com.projects.readycheck;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import com.projects.readycheck.exceptions.DatabasePersistenceException;
+import java.io.IOException;
 import java.lang.reflect.Type;
 import java.util.HashMap;
 import java.util.List;
@@ -36,7 +38,7 @@ public class SupabasePersistence {
   }
 
   public static void saveReadyCheck(
-      ReadyCheckManager.ReadyCheck readyCheck, boolean mentionPeople) {
+      ReadyCheckManager.ReadyCheck readyCheck, boolean mentionPeople) throws DatabasePersistenceException {
     try {
       Map<String, Object> config = new HashMap<>();
       config.put(GUILD_ID, readyCheck.getGuildId());
@@ -63,8 +65,10 @@ public class SupabasePersistence {
       client.newCall(request).execute().close();
       logger.info("Saved ready check configuration for guild: {}", readyCheck.getGuildId());
 
+    } catch (IOException e) {
+      throw new DatabasePersistenceException("save ready check configuration", e);
     } catch (Exception e) {
-      logger.error("Failed to save ready check configuration: {}", e.getMessage(), e);
+      throw new DatabasePersistenceException("save ready check configuration", e.getMessage());
     }
   }
 
