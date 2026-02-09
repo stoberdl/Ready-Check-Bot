@@ -11,7 +11,7 @@
 [![Code Smells](https://sonarcloud.io/api/project_badges/measure?project=stoberdl_Ready-Check-Bot&metric=code_smells)](https://sonarcloud.io/summary/new_code?id=stoberdl_Ready-Check-Bot)
 [![Technical Debt](https://sonarcloud.io/api/project_badges/measure?project=stoberdl_Ready-Check-Bot&metric=sqale_index)](https://sonarcloud.io/summary/new_code?id=stoberdl_Ready-Check-Bot)
 
-![Ready Check Demo](<img width="1145" height="413" alt="Discord_r6Swp72tUH" src="https://github.com/user-attachments/assets/8634e4f3-1388-4197-b3d6-c223086be94a" />)
+<img width="1145" height="413" alt="Discord_r6Swp72tUH" src="https://github.com/user-attachments/assets/6698c987-1eef-42b0-af7f-beafef73af72" />
 
 ## Why I Built This
 
