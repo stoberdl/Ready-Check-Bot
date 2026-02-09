@@ -11,7 +11,6 @@
 [![Code Smells](https://sonarcloud.io/api/project_badges/measure?project=stoberdl_Ready-Check-Bot&metric=code_smells)](https://sonarcloud.io/summary/new_code?id=stoberdl_Ready-Check-Bot)
 [![Technical Debt](https://sonarcloud.io/api/project_badges/measure?project=stoberdl_Ready-Check-Bot&metric=sqale_index)](https://sonarcloud.io/summary/new_code?id=stoberdl_Ready-Check-Bot)
 
-A production-ready Discord bot for coordinating group activities with intelligent ready checking, persistent storage, and advanced scheduling capabilities.
 
 ## Core Functionality
 
@@ -131,35 +130,6 @@ The bot requires two Supabase tables:
 
 Database setup scripts and migration details available in project documentation.
 
-## Advanced Features
-
-**Fault Tolerance**
-- Automatic message recovery from Discord history
-- State reconstruction after bot restarts
-- Graceful handling of missing users or roles
-- Comprehensive error logging and recovery
-
-**Performance Optimizations**
-- Lazy loading of Discord entities
-- Efficient batch operations for database updates
-- Connection pooling for external API calls
-- Memory-efficient concurrent data structures
-
-**User Experience**
-- Cross-timezone timestamp display
-- Progressive enhancement from simple to advanced features
-- Accessibility considerations with clear visual indicators
-- Mobile-friendly interface design
-
-## Code Quality
-
-This project demonstrates enterprise-level Java development practices including modern Java 21 features, comprehensive error handling, thread-safe concurrent programming, and clean architecture principles. Integrated with SonarCloud for continuous quality monitoring.
-
-**Architecture Highlights**
-- Layered design with clear separation of concerns
-- Event-driven reactive programming model
-- Comprehensive logging and monitoring
-- Docker containerization for consistent deployment
 
 ---
 
